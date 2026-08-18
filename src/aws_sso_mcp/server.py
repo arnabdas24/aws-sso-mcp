@@ -14,11 +14,12 @@ from dataclasses import asdict
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver.context import Context
 
 from .audit import append as audit_append
 from .audit import new_entry as audit_new_entry
 from .config import PortalConfig, load_config
-from .engine.catalog import execute_read
+from .engine.catalog import execute_read, validate_operation
 from .engine.dag import DagError, Step
 from .engine.dag import run_dag as execute_dag
 from .errors import McpError, RoleResolutionError
@@ -58,6 +59,46 @@ def _org_token_getter(state: AppState) -> Callable[[str], str]:
         return get_access_token(state.state_dir, state.require_portal(org_name))
 
     return _get
+
+
+def _progress_reporter(ctx: Context | None, verb: str) -> Callable[[int, int], None] | None:
+    """Build a fan-out progress callback that reports through MCP, if a Context was injected.
+
+    The tool body itself runs on an AnyIO worker thread (MCPServer dispatches
+    sync tool functions via ``anyio.to_thread.run_sync``), but ``fan_out``'s
+    per-target callback fires on its own short-lived *dispatch* pool threads
+    nested one level deeper - those have no AnyIO worker-thread identity of
+    their own, so a plain ``anyio.from_thread.run()`` call from inside them
+    would raise. AnyIO stashes the current worker thread's event-loop token
+    in a thread-local (``threadlocals.current_token``) the moment
+    ``to_thread.run_sync`` starts it - we read that here (only valid on the
+    worker thread that is invoking this tool) and pass it explicitly on
+    every nested call, which works from any thread.
+
+    Best-effort only - any failure to report progress (missing token,
+    closed event loop, disconnected client, ...) is swallowed; it must
+    never affect the underlying query.
+    """
+    if ctx is None:
+        return None
+
+    import anyio.from_thread
+
+    try:
+        token = anyio.from_thread.threadlocals.current_token  # type: ignore[attr-defined]
+    except AttributeError:
+        return None
+
+    def _report(done: int, total: int) -> None:
+        anyio.from_thread.run(
+            ctx.report_progress,
+            float(done),
+            float(total),
+            f"{verb} {done}/{total} accounts",
+            token=token,
+        )
+
+    return _report
 
 
 def _safe[T](fn: Callable[[], T]) -> T | dict[str, str]:
@@ -374,6 +415,7 @@ def aws_query(
     exclude_account_ids: list[str] | None = None,
     exclude_account_names: list[str] | None = None,
     role: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Run one read-only AWS API call across every account a selector resolves to.
 
@@ -394,6 +436,14 @@ def aws_query(
     def _run() -> dict[str, Any]:
         state = _get_state()
         call_params = params or {}
+        # Fail fast on a mutating/ungated-secret operation before touching the
+        # network at all - no credential minting, no SSO auth, no account lookups.
+        validate_operation(
+            service=service,
+            operation=operation,
+            params=call_params,
+            allow_secret_values=state.config.allow_secret_values,
+        )
 
         no_selectors_given = not any(
             [
@@ -471,7 +521,10 @@ def aws_query(
 
         fanout_targets = [(t.org, t.account_id, t.account_name) for t in targets]
         outcomes = state.executor.fan_out(
-            fanout_targets, credential_fn=credential_fn, service_fn=service_fn
+            fanout_targets,
+            credential_fn=credential_fn,
+            service_fn=service_fn,
+            on_progress=_progress_reporter(ctx, "queried"),
         )
 
         results: list[dict[str, Any]] = []
@@ -533,6 +586,7 @@ def run_dag(
     exclude_account_ids: list[str] | None = None,
     exclude_account_names: list[str] | None = None,
     role: str | None = None,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Run a small declarative multi-step query DAG against every resolved account.
 
@@ -562,6 +616,16 @@ def run_dag(
             ]
         except KeyError as exc:
             return {"error": f"each step requires an 'id'/'service'/'operation': missing {exc}"}
+
+        # Fail fast on any mutating/ungated-secret step before touching the
+        # network at all - no credential minting, no SSO auth, no account lookups.
+        for step in parsed_steps:
+            validate_operation(
+                service=step.service,
+                operation=step.operation,
+                params=step.params,
+                allow_secret_values=state.config.allow_secret_values,
+            )
 
         no_selectors_given = not any(
             [
@@ -658,7 +722,10 @@ def run_dag(
 
         fanout_targets = [(t.org, t.account_id, t.account_name) for t in targets]
         outcomes = state.executor.fan_out(
-            fanout_targets, credential_fn=credential_fn, service_fn=service_fn
+            fanout_targets,
+            credential_fn=credential_fn,
+            service_fn=service_fn,
+            on_progress=_progress_reporter(ctx, "ran DAG on"),
         )
 
         results: list[dict[str, Any]] = []

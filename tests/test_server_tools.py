@@ -205,9 +205,8 @@ def test_aws_query_denies_mutating_operation(
     result = server_module.aws_query(
         service="ec2", operation="StopInstances", region="us-east-1", org="org1"
     )
-    assert result["target_count"] == 1
-    assert result["results"][0]["ok"] is False
-    assert "not a recognized read-only operation" in result["results"][0]["error"]
+    assert "error" in result
+    assert "not a recognized read-only operation" in result["error"]
 
 
 def test_aws_query_success_across_targets(
@@ -312,3 +311,65 @@ def test_run_dag_no_targets_returns_warning(
     )
     assert result["target_count"] == 0
     assert "warning" in result
+
+
+def test_progress_reporter_returns_none_without_context() -> None:
+    assert server_module._progress_reporter(None, "queried") is None
+
+
+def test_progress_reporter_returns_none_outside_worker_thread() -> None:
+    """No AnyIO worker-thread token is available in a plain pytest call - must not raise."""
+
+    class _FakeCtx:
+        pass
+
+    reporter = server_module._progress_reporter(_FakeCtx(), "queried")  # type: ignore[arg-type]
+    assert reporter is None
+
+
+def test_aws_query_reports_progress_via_context(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    """When a real AnyIO worker-thread token IS available, progress is reported per target."""
+    import anyio
+    import anyio.to_thread
+
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+    )
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda account_id, region, token: ["Role1"],
+    )
+    monkeypatch.setattr("aws_sso_mcp.server.get_access_token", lambda *a, **k: "tok")
+    monkeypatch.setattr(state.broker, "get_session", lambda **k: object())
+    monkeypatch.setattr(
+        "aws_sso_mcp.server.execute_read", lambda **kwargs: {"Vpcs": [{"VpcId": "vpc-1"}]}
+    )
+
+    reported: list[tuple[float, float, str | None]] = []
+
+    class _FakeCtx:
+        async def report_progress(
+            self, progress: float, total: float | None = None, message: str | None = None
+        ) -> None:
+            reported.append((progress, total or 0.0, message))
+
+    def _run_in_worker() -> dict:
+        return server_module.aws_query(
+            service="ec2", operation="DescribeVpcs", region="us-east-1", org="org1", ctx=_FakeCtx()
+        )
+
+    # aws_query is a plain sync function; call it from inside an AnyIO worker
+    # thread (anyio.to_thread.run_sync), exactly how MCPServer invokes it, so a
+    # real event-loop token exists for anyio.from_thread.current_token().
+    async def _drive() -> dict:
+        return await anyio.to_thread.run_sync(_run_in_worker)
+
+    result = anyio.run(_drive)
+
+    assert result["target_count"] == 1
+    assert reported == [(1.0, 1.0, "queried 1/1 accounts")]

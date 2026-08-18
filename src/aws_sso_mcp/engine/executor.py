@@ -18,8 +18,9 @@ so callers never create their own thread pools.
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from typing import TypeVar
 
@@ -68,6 +69,7 @@ class QueryExecutor:
         *,
         credential_fn: Callable[[str, str, str], object],
         service_fn: Callable[[str, str, str, object], R],
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> list[TargetResult[R]]:
         """Run ``credential_fn`` then ``service_fn`` for every ``(org, account_id, account_name)``.
 
@@ -82,6 +84,11 @@ class QueryExecutor:
         or ``_service_pool`` themselves - submitting a blocking-wait task
         from inside one of those pools onto that same pool can deadlock
         once every worker is a waiting dispatcher.
+
+        ``on_progress``, if given, is invoked as ``(completed_count,
+        total_count)`` every time one target finishes (success or failure).
+        It runs on a dispatch-pool thread and any exception it raises is
+        swallowed - progress reporting must never break a query.
         """
         if not targets:
             return []
@@ -115,7 +122,8 @@ class QueryExecutor:
                 org=org, account_id=account_id, account_name=account_name, ok=True, value=value
             )
 
-        dispatch_workers = min(len(targets), 200)
+        total = len(targets)
+        dispatch_workers = min(total, 200)
         with ThreadPoolExecutor(
             max_workers=dispatch_workers, thread_name_prefix="aws-sso-mcp-dispatch"
         ) as dispatch_pool:
@@ -123,7 +131,15 @@ class QueryExecutor:
                 dispatch_pool.submit(_one, org, account_id, account_name)
                 for org, account_id, account_name in targets
             ]
-            return [f.result() for f in futures]
+            results: list[TargetResult[R]] = []
+            for completed, future in enumerate(as_completed(futures), start=1):
+                results.append(future.result())
+                if on_progress is not None:
+                    # Progress reporting is best-effort only - it must never
+                    # break a query (e.g. client disconnected, no listener).
+                    with contextlib.suppress(Exception):
+                        on_progress(completed, total)
+            return results
 
     def shutdown(self) -> None:
         self._credential_pool.shutdown(wait=True)

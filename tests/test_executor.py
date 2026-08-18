@@ -131,3 +131,48 @@ def test_target_result_is_a_plain_dataclass() -> None:
     )
     assert result.value == 42
     assert result.error is None
+
+
+def test_fan_out_reports_progress_for_every_target() -> None:
+    executor = QueryExecutor(credential_workers=4, service_workers=8)
+    targets = [("org1", f"{i:012d}", f"a{i}") for i in range(6)]
+    lock = threading.Lock()
+    calls: list[tuple[int, int]] = []
+
+    def on_progress(done: int, total: int) -> None:
+        with lock:
+            calls.append((done, total))
+
+    results = executor.fan_out(
+        targets,
+        credential_fn=lambda *_: "creds",
+        service_fn=lambda *_: "ok",
+        on_progress=on_progress,
+    )
+    executor.shutdown()
+
+    assert len(results) == 6
+    assert len(calls) == 6
+    # Every call reports the same fixed total, and "done" counts 1..N exactly once each.
+    assert {total for _, total in calls} == {6}
+    assert sorted(done for done, _ in calls) == list(range(1, 7))
+
+
+def test_fan_out_swallows_on_progress_exceptions() -> None:
+    """A broken progress callback must never break the underlying fan-out."""
+    executor = QueryExecutor(credential_workers=2, service_workers=2)
+    targets = [("org1", "111111111111", "a"), ("org1", "222222222222", "b")]
+
+    def on_progress(done: int, total: int) -> None:
+        raise RuntimeError("client disconnected")
+
+    results = executor.fan_out(
+        targets,
+        credential_fn=lambda *_: "creds",
+        service_fn=lambda *_: "ok",
+        on_progress=on_progress,
+    )
+    executor.shutdown()
+
+    assert len(results) == 2
+    assert all(r.ok for r in results)

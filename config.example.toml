@@ -1,0 +1,67 @@
+# Example aws-sso-mcp configuration.
+#
+# Copy this file to the resolved config path (in order of precedence):
+#   1. an explicit path you pass programmatically
+#   2. $AWS_SSO_MCP_CONFIG
+#   3. ~/.config/aws-sso-mcp/config.toml   (default)
+#
+# This file NEVER contains secrets, tokens, or credentials - only
+# references (SSO start URLs, regions, environment/role-matching rules).
+# The config loader actively rejects any key that looks like it might
+# hold one (see aws_sso_mcp/config.py::_FORBIDDEN_KEY_SUBSTRINGS).
+
+# Org made "active" at session start. Optional - if omitted, the first
+# tool call that needs an org will require an explicit org= argument.
+default_org = "org1"
+
+# Hours before a cached account/role directory is considered stale and
+# eligible for a lazy background refresh (checked once per session, or
+# forced any time via the refresh_accounts tool).
+cache_ttl_hours = 12
+
+# Whether operations that return decrypted/plaintext secret material
+# (secretsmanager:GetSecretValue, kms:Decrypt, s3:GetObject,
+# ssm:GetParameter* with WithDecryption=true) are permitted at all.
+# Metadata-only calls (e.g. secretsmanager:DescribeSecret) are always
+# allowed regardless of this flag.
+allow_secret_values = false
+
+log_level = "INFO"
+
+# --- One [portals.<alias>] table per IAM Identity Center org/instance ---
+# <alias> is what you pass as org="..." in every tool call, and namespaces
+# that org's token cache file and cached account/role rows.
+
+[portals.org1]
+start_url = "https://your-org1.awsapps.com/start"
+region = "us-east-1"  # region hosting org1's SSO/SSO-OIDC endpoint - NOT a query default
+
+# Environment rules classify accounts by name pattern and determine which
+# IAM role is assumed for each - deterministically, never chosen by the
+# model. First matching pattern wins; rules are tried in declaration order.
+[portals.org1.environments.prod]
+match = "endswith"                 # exact | startswith | endswith | contains | regex
+patterns = ["-prod", "-production"]
+roles = ["ReadOnlyAccess"]          # tried first, in order, against roles actually granted
+fallback = ["SecurityAudit"]        # tried only if nothing in `roles` was granted
+
+[portals.org1.environments.staging]
+match = "endswith"
+patterns = ["-staging", "-stage"]
+roles = ["ReadOnlyAccess"]
+
+[portals.org1.environments.dev]
+match = "endswith"
+patterns = ["-dev", "-sandbox"]
+roles = ["ReadOnlyAccess", "PowerUserAccess"]
+
+# A second org - alias, start_url and region are all independent. Add as
+# many [portals.<alias>] tables as you have orgs (5, 6, however many).
+[portals.org2]
+start_url = "https://your-org2.awsapps.com/start"
+region = "us-east-1"
+
+[portals.org2.environments.prod]
+match = "regex"
+patterns = ["^prod-.*"]
+roles = ["ReadOnlyAccess"]
