@@ -4,13 +4,46 @@ This folder contains a working example configuration and step-by-step
 instructions for running the server locally and wiring it into an MCP
 client.
 
-## 1. Install dependencies
+## 1. Install it
 
-From the repo root:
+There are two ways to get the `aws-sso-mcp` command:
+
+**Option A - install it globally (recommended for actual use):** once
+this repo is pushed to GitHub, anyone can install it directly with
+`uv tool install` (or `pipx`) - no repo checkout, no `cwd`, works from
+any directory afterward:
 
 ```bash
-uv sync
+uv tool install git+https://github.com/<owner>/aws-sso-mcp.git@<branch>
 ```
+
+This puts a standalone `aws-sso-mcp` executable on your `PATH`
+(`~/.local/bin/aws-sso-mcp` by default). Verify it:
+
+```bash
+which aws-sso-mcp
+```
+
+To install from a local checkout instead of git (e.g. while developing):
+
+```bash
+cd /path/to/aws-sso-mcp
+uv tool install --editable .
+```
+
+`--editable` means local code edits take effect immediately without
+reinstalling.
+
+**Option B - run it from a repo checkout without installing:** useful
+for quick local testing.
+
+```bash
+cd /path/to/aws-sso-mcp
+uv sync
+uv run aws-sso-mcp
+```
+
+The rest of this guide shows both forms side by side.
 
 ## 2. Create your config
 
@@ -46,7 +79,9 @@ Cache/token state (never secrets in the config itself) lives under
 ## 3. Run it standalone (sanity check)
 
 ```bash
-uv run aws-sso-mcp
+aws-sso-mcp              # if installed globally (Option A)
+# or
+uv run aws-sso-mcp       # if running from a repo checkout (Option B)
 ```
 
 This starts the server on **stdio** and blocks, waiting for an MCP
@@ -55,8 +90,20 @@ loads and the binary starts; a real client is needed to call tools.
 
 ## 4. Register with an MCP client
 
-Point your client at the `uv run aws-sso-mcp` command, run from the repo
-directory. Example client config (VS Code / Claude Desktop style):
+If installed globally (Option A), point your client straight at the
+`aws-sso-mcp` executable - no `cwd` needed:
+
+```json
+{
+  "mcpServers": {
+    "aws-sso-mcp": {
+      "command": "aws-sso-mcp"
+    }
+  }
+}
+```
+
+If running from a repo checkout instead (Option B):
 
 ```json
 {
@@ -71,15 +118,14 @@ directory. Example client config (VS Code / Claude Desktop style):
 ```
 
 If you want to point at a non-default config/state location instead of
-`~/.config/aws-sso-mcp/config.toml`, add an `env` block:
+`~/.config/aws-sso-mcp/config.toml`, add an `env` block (works with
+either option):
 
 ```json
 {
   "mcpServers": {
     "aws-sso-mcp": {
-      "command": "uv",
-      "args": ["run", "aws-sso-mcp"],
-      "cwd": "/absolute/path/to/aws-sso-mcp",
+      "command": "aws-sso-mcp",
       "env": {
         "AWS_SSO_MCP_CONFIG": "/absolute/path/to/config.toml",
         "AWS_SSO_MCP_STATE_DIR": "/absolute/path/to/state-dir"
@@ -94,8 +140,26 @@ If you want to point at a non-default config/state location instead of
 VS Code's MCP support uses a `servers` key (not `mcpServers`) and can be
 scoped per-workspace or per-user.
 
-**Workspace-scoped (recommended for this repo):** create
-`.vscode/mcp.json` in the project you want to query AWS from:
+**User-scoped, installed globally (recommended - works in every
+workspace):** run **Command Palette -> "MCP: Open User Configuration"**
+and add:
+
+```json
+{
+  "servers": {
+    "aws-sso-mcp": {
+      "type": "stdio",
+      "command": "aws-sso-mcp"
+    }
+  }
+}
+```
+
+Or run **Command Palette -> "MCP: Add Server..."**, choose
+"Command (stdio)", and enter `aws-sso-mcp` as the command.
+
+**Workspace-scoped, from a repo checkout:** create `.vscode/mcp.json` in
+the project you want to query AWS from:
 
 ```json
 {
@@ -110,23 +174,15 @@ scoped per-workspace or per-user.
 }
 ```
 
-**User-scoped (available in every workspace):** run
-**Command Palette -> "MCP: Open User Configuration"** and add the same
-`aws-sso-mcp` entry under `servers`, or run
-**Command Palette -> "MCP: Add Server..."** and choose "Command (stdio)",
-then fill in `uv` / `run aws-sso-mcp` / the repo path when prompted.
-
 If your config/state live somewhere other than the defaults, add an
-`env` block exactly as in step 4:
+`env` block (works with either form above):
 
 ```json
 {
   "servers": {
     "aws-sso-mcp": {
       "type": "stdio",
-      "command": "uv",
-      "args": ["run", "aws-sso-mcp"],
-      "cwd": "/absolute/path/to/aws-sso-mcp",
+      "command": "aws-sso-mcp",
       "env": {
         "AWS_SSO_MCP_CONFIG": "/absolute/path/to/config.toml",
         "AWS_SSO_MCP_STATE_DIR": "/absolute/path/to/state-dir"
