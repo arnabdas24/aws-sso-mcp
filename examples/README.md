@@ -89,7 +89,71 @@ If you want to point at a non-default config/state location instead of
 }
 ```
 
-## 5. First use, in chat
+## 5. Using it in VS Code (GitHub Copilot Chat)
+
+VS Code's MCP support uses a `servers` key (not `mcpServers`) and can be
+scoped per-workspace or per-user.
+
+**Workspace-scoped (recommended for this repo):** create
+`.vscode/mcp.json` in the project you want to query AWS from:
+
+```json
+{
+  "servers": {
+    "aws-sso-mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "aws-sso-mcp"],
+      "cwd": "/absolute/path/to/aws-sso-mcp"
+    }
+  }
+}
+```
+
+**User-scoped (available in every workspace):** run
+**Command Palette -> "MCP: Open User Configuration"** and add the same
+`aws-sso-mcp` entry under `servers`, or run
+**Command Palette -> "MCP: Add Server..."** and choose "Command (stdio)",
+then fill in `uv` / `run aws-sso-mcp` / the repo path when prompted.
+
+If your config/state live somewhere other than the defaults, add an
+`env` block exactly as in step 4:
+
+```json
+{
+  "servers": {
+    "aws-sso-mcp": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["run", "aws-sso-mcp"],
+      "cwd": "/absolute/path/to/aws-sso-mcp",
+      "env": {
+        "AWS_SSO_MCP_CONFIG": "/absolute/path/to/config.toml",
+        "AWS_SSO_MCP_STATE_DIR": "/absolute/path/to/state-dir"
+      }
+    }
+  }
+}
+```
+
+After saving `mcp.json`, VS Code shows an inline **Start** action above
+the `aws-sso-mcp` entry - click it (or reload the window) to launch the
+server. Once running:
+
+* Open the Copilot Chat panel and switch to **Agent mode** (tools are
+  only available in Agent mode, not Ask/Edit mode).
+* Click the **tools icon** in the chat input to confirm `aws-sso-mcp`'s
+  tools (`aws_query`, `run_dag`, `login`, `use_org`, ...) are listed and
+  enabled.
+* Chat naturally, e.g. *"login to org1"* then *"list stopped EC2
+  instances across every prod account"* - Copilot will call the tools
+  for you and prompt for confirmation before each tool run (VS Code asks
+  per-tool/per-session approval by default).
+* Use **Command Palette -> "MCP: Show Output"** / the "Show Output"
+  action on the server entry to view server logs if something looks
+  wrong (e.g. a config error surfaces there immediately on start).
+
+## 6. First use, in chat
 
 1. `login to org1` (or whichever alias you used) - opens a browser for
    SSO device authorization once; the token is cached until it expires.
@@ -109,7 +173,7 @@ Only read-only AWS calls (`Describe*`/`List*`/`Get*`/`Head*` plus a small
 explicit allowlist) are ever permitted - a mutating call is rejected
 immediately, before any network activity.
 
-## 6. Verify it end-to-end without a full client (optional)
+## 7. Verify it end-to-end without a full client (optional)
 
 A minimal Python MCP client smoke test, useful when debugging:
 
