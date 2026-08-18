@@ -131,3 +131,184 @@ def test_cache_status(sample_config_path: Path, isolated_env: Path) -> None:
     result = server_module.cache_status()
     assert {o["org"] for o in result["orgs"]} == {"org1", "org2"}
     assert all(o["stale"] for o in result["orgs"])
+
+
+def _seed_token(state: AppState, org: str) -> None:
+    import json
+
+    from aws_sso_mcp.sso import device_auth
+
+    future = (datetime.now() + timedelta(hours=1)).strftime(device_auth._TIME_FORMAT)
+    token_path = device_auth.token_cache_path(state.state_dir, org)
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(
+        json.dumps({"access_token": "tok", "expires_at": future}), encoding="utf-8"
+    )
+    token_path.chmod(0o600)
+
+
+def test_list_roles(sample_config_path: Path, isolated_env: Path, monkeypatch) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda region, token, account_id: ["ReadOnly", "AdminRole"],
+    )
+    result = server_module.list_roles("111111111111", org="org1")
+    assert result["roles"] == ["ReadOnly", "AdminRole"]
+
+
+def test_explain_role_selection_sole_grant(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda region, token, account_id: ["OnlyRole"],
+    )
+    result = server_module.explain_role_selection("111111111111", "some-account", org="org1")
+    assert result["resolved"] is True
+    assert result["role"] == "OnlyRole"
+    assert result["source"] == "sole-grant"
+
+
+def test_explain_role_selection_ambiguous_returns_reason(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda region, token, account_id: ["RoleA", "RoleB"],
+    )
+    result = server_module.explain_role_selection("111111111111", "some-account", org="org1")
+    assert result["resolved"] is False
+    assert "RoleA" in result["reason"] or result["granted_roles"] == ["RoleA", "RoleB"]
+
+
+def test_aws_query_denies_mutating_operation(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+    )
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda region, token, account_id: ["OnlyRole"],
+    )
+    monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
+
+    result = server_module.aws_query(
+        service="ec2", operation="StopInstances", region="us-east-1", org="org1"
+    )
+    assert result["target_count"] == 1
+    assert result["results"][0]["ok"] is False
+    assert "not a recognized read-only operation" in result["results"][0]["error"]
+
+
+def test_aws_query_success_across_targets(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [
+            server_module_sso_account("111111111111", "acct-a"),
+            server_module_sso_account("222222222222", "acct-b"),
+        ],
+    )
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda region, token, account_id: ["OnlyRole"],
+    )
+    monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
+    monkeypatch.setattr(
+        "aws_sso_mcp.server.execute_read",
+        lambda **kwargs: {"Reservations": [{"Instances": [{"InstanceId": "i-123"}]}]},
+    )
+
+    result = server_module.aws_query(
+        service="ec2", operation="DescribeInstances", region="us-east-1", org="org1"
+    )
+    assert result["target_count"] == 2
+    assert all(r["ok"] for r in result["results"])
+    assert all(r["role"] == "OnlyRole" for r in result["results"])
+
+    audit_lines = state.audit_log_path.read_text(encoding="utf-8").splitlines()
+    assert len(audit_lines) == 2
+
+
+def test_aws_query_no_targets_returns_warning(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_accounts", lambda region, token: [])
+
+    result = server_module.aws_query(
+        service="ec2", operation="DescribeInstances", region="us-east-1", org="org1"
+    )
+    assert result["target_count"] == 0
+    assert "warning" in result
+
+
+def test_run_dag_success_single_step(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+    )
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda region, token, account_id: ["OnlyRole"],
+    )
+    monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
+    monkeypatch.setattr(
+        "aws_sso_mcp.server.execute_read",
+        lambda **kwargs: {"Vpcs": [{"VpcId": "vpc-1"}]},
+    )
+
+    result = server_module.run_dag(
+        steps=[{"id": "a", "service": "ec2", "operation": "DescribeVpcs"}],
+        region="us-east-1",
+        org="org1",
+    )
+    assert result["target_count"] == 1
+    assert result["results"][0]["ok"] is True
+    assert result["results"][0]["data"]["steps"]["a"]["extracted"] == {"Vpcs": [{"VpcId": "vpc-1"}]}
+    audit_lines = state.audit_log_path.read_text(encoding="utf-8").splitlines()
+    assert len(audit_lines) == 1
+
+
+def test_run_dag_missing_field_returns_clean_error(
+    sample_config_path: Path, isolated_env: Path
+) -> None:
+    _fresh_state(sample_config_path)
+    result = server_module.run_dag(
+        steps=[{"id": "a", "service": "ec2"}], region="us-east-1", org="org1"
+    )
+    assert "error" in result
+
+
+def test_run_dag_no_targets_returns_warning(
+    sample_config_path: Path, isolated_env: Path, monkeypatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    _seed_token(state, "org1")
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_accounts", lambda region, token: [])
+
+    result = server_module.run_dag(
+        steps=[{"id": "a", "service": "ec2", "operation": "DescribeVpcs"}],
+        region="us-east-1",
+        org="org1",
+    )
+    assert result["target_count"] == 0
+    assert "warning" in result

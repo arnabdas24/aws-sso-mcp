@@ -37,3 +37,21 @@ def redact(text: str) -> str:
     """Return ``text`` with known-sensitive key/value pairs and bare secrets masked."""
     text = _KEY_VALUE_PATTERN.sub(lambda m: f"{m.group('key')}{m.group('sep')}{_REDACTED}", text)
     return _BARE_VALUE_PATTERN.sub(_REDACTED, text)
+
+
+def redact_value(value: object) -> object:
+    """Recursively apply :func:`redact` to every string inside a dict/list/tuple structure.
+
+    Defense-in-depth over raw AWS API responses before they ever reach an
+    MCP client - tool code should never rely on this alone, but every tool
+    output is passed through it regardless.
+    """
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {redact(str(k)): redact_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [redact_value(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(redact_value(v) for v in value)
+    return value

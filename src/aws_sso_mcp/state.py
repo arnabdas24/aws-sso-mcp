@@ -13,6 +13,7 @@ from pathlib import Path
 
 from .cache.accounts import AccountCache
 from .config import Config, PortalConfig, default_state_dir
+from .engine.executor import QueryExecutor
 from .errors import OrgNotFoundError
 from .sso.broker import CredentialBroker
 
@@ -24,6 +25,7 @@ class AppState:
     config: Config
     cache: AccountCache
     broker: CredentialBroker
+    executor: QueryExecutor
     state_dir: Path
     _active_org_lock: threading.Lock
     _active_org: str | None = None
@@ -37,10 +39,15 @@ class AppState:
             config=config,
             cache=cache,
             broker=CredentialBroker(),
+            executor=QueryExecutor(),
             state_dir=state_dir,
             _active_org_lock=threading.Lock(),
             _active_org=config.default_org,
         )
+
+    @property
+    def audit_log_path(self) -> Path:
+        return self.state_dir / "audit.jsonl"
 
     def get_active_org(self) -> str | None:
         with self._active_org_lock:
