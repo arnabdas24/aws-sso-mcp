@@ -90,6 +90,18 @@ loads and the binary starts; a real client is needed to call tools.
 
 ## 4. Register with an MCP client
 
+**If you're using VS Code, skip this step and go straight to step 5** -
+VS Code uses a different config file/format from the generic
+`mcpServers` example below.
+
+The snippet below is the format used by **Claude Desktop** and several
+other MCP clients (key name `mcpServers`). For Claude Desktop
+specifically, this JSON goes in:
+
+* macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+* Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+* Linux (community builds): `~/.config/Claude/claude_desktop_config.json`
+
 If installed globally (Option A), point your client straight at the
 `aws-sso-mcp` executable - no `cwd` needed:
 
