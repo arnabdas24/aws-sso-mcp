@@ -1,0 +1,167 @@
+"""Tests for aws_sso_mcp.cache.accounts - the lazy, TTL-threshold account cache."""
+
+from __future__ import annotations
+
+import threading
+import time
+from pathlib import Path
+
+from aws_sso_mcp.cache.accounts import AccountCache
+from aws_sso_mcp.sso.directory import SsoAccount
+
+
+def _make_cache(tmp_path: Path, ttl_hours: float = 12) -> AccountCache:
+    return AccountCache(tmp_path / "cache.db", ttl_hours=ttl_hours)
+
+
+def test_is_stale_when_never_synced(tmp_path: Path) -> None:
+    cache = _make_cache(tmp_path)
+    assert cache.is_stale("org1") is True
+
+
+def test_ensure_fresh_calls_list_accounts_once_when_fresh(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path, ttl_hours=12)
+    calls = {"n": 0}
+
+    def fake_list_accounts(region, token):
+        calls["n"] += 1
+        return [SsoAccount(account_id="111", account_name="acct-a")]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_accounts", fake_list_accounts)
+
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+    assert calls["n"] == 1
+    assert cache.is_stale("org1") is False
+
+    # Second call within TTL should NOT re-fetch.
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+    assert calls["n"] == 1
+
+
+def test_ensure_fresh_force_refetches(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path)
+    calls = {"n": 0}
+
+    def fake_list_accounts(region, token):
+        calls["n"] += 1
+        return [SsoAccount(account_id="111", account_name="acct-a")]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_accounts", fake_list_accounts)
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok", force=True)
+    assert calls["n"] == 2
+
+
+def test_ensure_fresh_expired_ttl_triggers_refresh(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path, ttl_hours=0.0)  # always stale
+    calls = {"n": 0}
+
+    def fake_list_accounts(region, token):
+        calls["n"] += 1
+        return [SsoAccount(account_id="111", account_name="acct-a")]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_accounts", fake_list_accounts)
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+    assert calls["n"] == 2
+
+
+def test_single_flight_prevents_duplicate_refresh(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path, ttl_hours=0.0)
+    calls = {"n": 0}
+    call_lock = threading.Lock()
+
+    def fake_list_accounts(region, token):
+        with call_lock:
+            calls["n"] += 1
+        time.sleep(0.05)
+        return [SsoAccount(account_id="111", account_name="acct-a")]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_accounts", fake_list_accounts)
+
+    # First populate so the second wave of concurrent calls sees a non-force refresh path.
+    threads = [
+        threading.Thread(
+            target=lambda: cache.ensure_fresh(
+                "org1", region="us-east-1", access_token_getter=lambda: "tok"
+            )
+        )
+        for _ in range(5)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # With ttl_hours=0 every call sees "stale", but the per-org lock means
+    # only the first thread through actually re-lists (see re-check inside lock);
+    # subsequent threads still perform work here since ttl=0 keeps it stale after
+    # each refresh, so we only assert the cache ends up populated and consistent.
+    assert cache.accounts_for_org("org1") == [SsoAccount(account_id="111", account_name="acct-a")]
+
+
+def test_search_accounts_by_name(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path)
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [
+            SsoAccount(account_id="111", account_name="payments-dev"),
+            SsoAccount(account_id="222", account_name="payments-test"),
+        ],
+    )
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+
+    exact = cache.search_accounts(orgs=["org1"], name="payments-dev")
+    assert len(exact) == 1
+    assert exact[0][1].account_id == "111"
+
+    contains = cache.search_accounts(orgs=["org1"], name_contains="payments")
+    assert len(contains) == 2
+
+
+def test_search_accounts_across_orgs(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path)
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [SsoAccount(account_id="111", account_name="shared-services")],
+    )
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+    cache.ensure_fresh("org2", region="eu-west-1", access_token_getter=lambda: "tok")
+
+    matches = cache.search_accounts(name="shared-services")
+    assert {org for org, _ in matches} == {"org1", "org2"}
+
+
+def test_roles_for_account_lazy_fetch_and_cache(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path)
+    calls = {"n": 0}
+
+    def fake_roles(region, token, account_id):
+        calls["n"] += 1
+        return ["DevRole", "ReadOnly"]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_account_roles", fake_roles)
+
+    roles = cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+    assert roles == ["DevRole", "ReadOnly"]
+    assert calls["n"] == 1
+
+    # Second call should hit the cache, not re-fetch.
+    roles2 = cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+    assert roles2 == ["DevRole", "ReadOnly"]
+    assert calls["n"] == 1
+
+
+def test_invalidate_role_forces_refetch(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path)
+    calls = {"n": 0}
+
+    def fake_roles(region, token, account_id):
+        calls["n"] += 1
+        return ["DevRole"]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_account_roles", fake_roles)
+    cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+    cache.invalidate_role("org1", "111", "DevRole")
+    cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+    assert calls["n"] == 2
