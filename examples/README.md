@@ -237,9 +237,11 @@ server. Once running:
    deterministic, never chosen by the model itself. Multi-step questions
    use `run_dag` to chain calls per account.
 
-Only read-only AWS calls (`Describe*`/`List*`/`Get*`/`Head*` plus a small
-explicit allowlist) are ever permitted - a mutating call is rejected
-immediately, before any network activity.
+Any AWS operation the assumed role is permitted to perform - read *or*
+mutating - is dispatched, with AWS IAM as the sole authorization boundary.
+Nothing is refused locally: if the role lacks permission, AWS returns
+AccessDenied and that error is surfaced as-is. Every call is recorded in the
+append-only audit log (mutating calls are flagged with `"write": true`).
 
 ## 7. Verify it end-to-end without a full client (optional)
 

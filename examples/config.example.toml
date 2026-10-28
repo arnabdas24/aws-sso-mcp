@@ -19,14 +19,19 @@ default_org = "org1"
 # forced any time via the refresh_accounts tool).
 cache_ttl_hours = 12
 
-# Whether operations that return decrypted/plaintext secret material
-# (secretsmanager:GetSecretValue, kms:Decrypt, s3:GetObject,
-# ssm:GetParameter* with WithDecryption=true) are permitted at all.
-# Metadata-only calls (e.g. secretsmanager:DescribeSecret) are always
-# allowed regardless of this flag.
-allow_secret_values = false
-
 log_level = "INFO"
+
+# Optional: multi-account fan-out concurrency and blast-radius knobs. Defaults
+# are sized for a typical 100-500 account footprint. Bump service_workers to
+# speed up large fan-outs; keep credential_workers modest to stay under SSO
+# throttling.
+[performance]
+credential_workers = 10                # sso:GetRoleCredentials concurrency
+service_workers = 50                   # per-account call concurrency
+per_target_timeout_seconds = 60        # soft deadline per account, 0 = disabled
+progress_min_interval_seconds = 0.25   # throttle for MCP progress updates
+max_items_per_account = 1000           # pagination ceiling per account, per call
+max_accounts = 200                     # refuse a selection wider than this
 
 # --- One [portals.<alias>] table per IAM Identity Center org/instance ---
 # <alias> is what you pass as org="..." in every tool call, and namespaces
