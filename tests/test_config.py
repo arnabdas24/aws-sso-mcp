@@ -17,7 +17,6 @@ def test_load_valid_config(sample_config_path: Path) -> None:
     assert cfg.portals["org1"].start_url == "https://example.awsapps.com/start"
     assert cfg.portals["org1"].sso_region == "us-east-1"
     assert cfg.cache_ttl_hours == 12
-    assert cfg.allow_secret_values is False
     assert "dev" in cfg.portals["org1"].environments
     env = cfg.portals["org1"].environments["dev"]
     assert env.roles == ("DevRole",)

@@ -2,12 +2,52 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 
-@pytest.fixture()
+@pytest.fixture(autouse=True)
+def _reset_module_caches() -> None:
+    """Clear process-wide caches (SSO tokens, boto3 clients) between tests.
+
+    These caches are correct in production but leak state across tests that
+    share the same "org1" alias with different tmp dirs. Reset them
+    proactively so no test can see another's residue.
+    """
+    from aws_sso_mcp import awscfg
+    from aws_sso_mcp.sso import device_auth
+
+    with device_auth._MEM_LOCK:
+        device_auth._MEM_CACHE.clear()
+    awscfg.reset_client_cache()
+
+
+@pytest.fixture
+def flush_audit() -> Callable[[Path], None]:
+    """Return a helper that blocks until the audit writer has drained to disk.
+
+    The audit log is written by a background daemon thread so that a fan-out
+    never waits on file I/O. Tests that assert on the file's contents need to
+    wait for that thread, which this does via the same ``flush_all`` drain that
+    the production ``atexit`` hook uses - so the tests exercise the real
+    shutdown path rather than a test-only imitation of it.
+
+    The returned helper still takes the log path, which keeps call sites
+    self-documenting about *what* they are waiting for, but it is unused:
+    ``flush_all`` drains every writer.
+    """
+
+    def _flush(_log_path: Path) -> None:
+        from aws_sso_mcp import audit
+
+        audit.flush_all()
+
+    return _flush
+
+
+@pytest.fixture
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Isolate $HOME, AWS_SSO_MCP_CONFIG, and AWS_SSO_MCP_STATE_DIR to a tmp dir."""
     home = tmp_path / "home"
@@ -18,7 +58,7 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-@pytest.fixture()
+@pytest.fixture
 def sample_config_path(tmp_path: Path) -> Path:
     """Write a minimal valid two-org config file and return its path."""
     config_path = tmp_path / "config.toml"
@@ -26,7 +66,6 @@ def sample_config_path(tmp_path: Path) -> Path:
         """
 default_org = "org1"
 cache_ttl_hours = 12
-allow_secret_values = false
 
 [portals.org1]
 start_url = "https://example.awsapps.com/start"

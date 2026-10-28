@@ -9,7 +9,7 @@ import pytest
 from botocore.stub import Stubber
 
 from aws_sso_mcp.engine import catalog
-from aws_sso_mcp.errors import AwsCallError, OperationDeniedError, RegionError
+from aws_sso_mcp.errors import AwsCallError, RegionError
 
 
 class _FakeSession:
@@ -18,7 +18,7 @@ class _FakeSession:
     def __init__(self, client: Any) -> None:
         self._client = client
 
-    def client(self, service: str, region_name: str) -> Any:
+    def client(self, service: str, region_name: str, config: Any | None = None) -> Any:
         return self._client
 
 
@@ -44,82 +44,18 @@ def test_is_read_operation(operation: str, expected: bool) -> None:
     assert catalog.is_read_operation(operation) is expected
 
 
-def test_requires_secret_gate_always_gated() -> None:
-    assert catalog.requires_secret_gate("secretsmanager", "GetSecretValue", {}) is True
-    assert catalog.requires_secret_gate("kms", "Decrypt", {}) is True
-    assert catalog.requires_secret_gate("s3", "GetObject", {}) is True
-
-
-def test_requires_secret_gate_conditional_on_param() -> None:
-    assert catalog.requires_secret_gate("ssm", "GetParameter", {}) is False
-    assert catalog.requires_secret_gate("ssm", "GetParameter", {"WithDecryption": False}) is False
-    assert catalog.requires_secret_gate("ssm", "GetParameter", {"WithDecryption": True}) is True
-
-
-def test_requires_secret_gate_unrelated_operation() -> None:
-    assert catalog.requires_secret_gate("ec2", "DescribeInstances", {}) is False
-
-
-def test_validate_operation_denies_mutating_verb() -> None:
-    with pytest.raises(OperationDeniedError, match="not a recognized read-only operation"):
-        catalog.validate_operation(
-            service="ec2",
-            operation="StopInstances",
-            params={},
-            allow_secret_values=False,
-        )
-
-
-def test_validate_operation_denies_ungated_secret_read() -> None:
-    with pytest.raises(OperationDeniedError, match="allow_secret_values"):
-        catalog.validate_operation(
-            service="secretsmanager",
-            operation="GetSecretValue",
-            params={},
-            allow_secret_values=False,
-        )
-
-
-def test_validate_operation_allows_gated_secret_read_when_enabled() -> None:
-    catalog.validate_operation(
-        service="secretsmanager",
-        operation="GetSecretValue",
-        params={},
-        allow_secret_values=True,
-    )
-
-
-def test_validate_operation_allows_plain_read() -> None:
-    catalog.validate_operation(
-        service="ec2", operation="DescribeInstances", params={}, allow_secret_values=False
-    )
-
-
-def test_execute_read_requires_region() -> None:
+def test_execute_call_requires_region() -> None:
     with pytest.raises(RegionError):
-        catalog.execute_read(
+        catalog.execute_call(
             session=_FakeSession(None),  # type: ignore[arg-type]
             region="",
             service="ec2",
             operation="DescribeInstances",
             params={},
-            allow_secret_values=False,
         )
 
 
-def test_execute_read_denies_mutating_before_any_client_call() -> None:
-    with pytest.raises(OperationDeniedError):
-        catalog.execute_read(
-            session=_FakeSession(None),  # type: ignore[arg-type]
-            region="us-east-1",
-            service="ec2",
-            operation="TerminateInstances",
-            params={"InstanceIds": ["i-123"]},
-            allow_secret_values=False,
-        )
-
-
-def test_execute_read_success_strips_response_metadata() -> None:
+def test_execute_call_success_strips_response_metadata() -> None:
     client = boto3.client("ec2", region_name="us-east-1")
     stubber = Stubber(client)
     stubber.add_response(
@@ -134,13 +70,12 @@ def test_execute_read_success_strips_response_metadata() -> None:
     )
     stubber.activate()
 
-    response = catalog.execute_read(
+    response = catalog.execute_call(
         session=_FakeSession(client),  # type: ignore[arg-type]
         region="us-east-1",
         service="ec2",
         operation="DescribeInstances",
         params={"Filters": [{"Name": "instance-state-name", "Values": ["stopped"]}]},
-        allow_secret_values=False,
     )
     stubber.deactivate()
 
@@ -148,7 +83,7 @@ def test_execute_read_success_strips_response_metadata() -> None:
     assert response["Reservations"][0]["Instances"][0]["InstanceId"] == "i-123"
 
 
-def test_execute_read_wraps_client_error_cleanly() -> None:
+def test_execute_call_wraps_client_error_cleanly() -> None:
     client = boto3.client("ec2", region_name="us-east-1")
     stubber = Stubber(client)
     stubber.add_client_error(
@@ -160,13 +95,12 @@ def test_execute_read_wraps_client_error_cleanly() -> None:
     stubber.activate()
 
     with pytest.raises(AwsCallError) as exc_info:
-        catalog.execute_read(
+        catalog.execute_call(
             session=_FakeSession(client),  # type: ignore[arg-type]
             region="us-east-1",
             service="ec2",
             operation="DescribeInstances",
             params={},
-            allow_secret_values=False,
         )
     stubber.deactivate()
 
@@ -175,14 +109,142 @@ def test_execute_read_wraps_client_error_cleanly() -> None:
     assert exc_info.value.operation == "DescribeInstances"
 
 
-def test_execute_read_unknown_operation_raises_clean_error() -> None:
+def test_execute_call_unknown_operation_raises_clean_error() -> None:
     client = boto3.client("ec2", region_name="us-east-1")
-    with pytest.raises(OperationDeniedError, match="not a recognized API operation"):
-        catalog.execute_read(
+    with pytest.raises(AwsCallError, match="has no operation named"):
+        catalog.execute_call(
             session=_FakeSession(client),  # type: ignore[arg-type]
             region="us-east-1",
             service="ec2",
             operation="DescribeTotallyNotARealOperation",
             params={},
-            allow_secret_values=False,
         )
+
+
+def test_execute_call_dispatches_mutating_operation() -> None:
+    """IAM is the sole boundary - a destructive op is dispatched, not refused locally."""
+    client = boto3.client("ec2", region_name="us-east-1")
+    stubber = Stubber(client)
+    stubber.add_response(
+        "terminate_instances",
+        {"TerminatingInstances": [{"InstanceId": "i-123"}]},
+        {"InstanceIds": ["i-123"]},
+    )
+    stubber.activate()
+
+    response = catalog.execute_call(
+        session=_FakeSession(client),  # type: ignore[arg-type]
+        region="us-east-1",
+        service="ec2",
+        operation="TerminateInstances",
+        params={"InstanceIds": ["i-123"]},
+    )
+    stubber.deactivate()
+
+    assert response["TerminatingInstances"][0]["InstanceId"] == "i-123"
+
+
+def test_execute_call_dispatches_secret_value_read() -> None:
+    """Secret reads are no longer gated locally; AWS decides via IAM."""
+    client = boto3.client("secretsmanager", region_name="us-east-1")
+    stubber = Stubber(client)
+    stubber.add_response(
+        "get_secret_value",
+        {"Name": "prod/db", "SecretString": "s3kr3t"},
+        {"SecretId": "prod/db"},
+    )
+    stubber.activate()
+
+    response = catalog.execute_call(
+        session=_FakeSession(client),  # type: ignore[arg-type]
+        region="us-east-1",
+        service="secretsmanager",
+        operation="GetSecretValue",
+        params={"SecretId": "prod/db"},
+    )
+    stubber.deactivate()
+
+    assert response["Name"] == "prod/db"
+
+
+def _stub_two_pages(stubber: Stubber) -> None:
+    """Queue a two-page DescribeInstances response linked by NextToken."""
+    stubber.add_response(
+        "describe_instances",
+        {
+            "Reservations": [{"Instances": [{"InstanceId": "i-1"}]}],
+            "NextToken": "page2",
+        },
+        {},
+    )
+    stubber.add_response(
+        "describe_instances",
+        {"Reservations": [{"Instances": [{"InstanceId": "i-2"}]}]},
+        {"NextToken": "page2"},
+    )
+
+
+def test_execute_call_merges_all_pages() -> None:
+    """Every page is fetched, so a caller never sees a silently truncated answer."""
+    client = boto3.client("ec2", region_name="us-east-1")
+    stubber = Stubber(client)
+    _stub_two_pages(stubber)
+    stubber.activate()
+
+    response = catalog.execute_call(
+        session=_FakeSession(client),  # type: ignore[arg-type]
+        region="us-east-1",
+        service="ec2",
+        operation="DescribeInstances",
+        params={},
+    )
+    stubber.deactivate()
+
+    ids = [i["InstanceId"] for r in response["Reservations"] for i in r["Instances"]]
+    assert ids == ["i-1", "i-2"]
+    assert catalog.TRUNCATED_KEY not in response
+
+
+def test_execute_call_marks_result_truncated_at_max_items() -> None:
+    """Hitting the cap must be announced, never silently hidden from the model."""
+    client = boto3.client("ec2", region_name="us-east-1")
+    stubber = Stubber(client)
+    _stub_two_pages(stubber)
+    stubber.activate()
+
+    response = catalog.execute_call(
+        session=_FakeSession(client),  # type: ignore[arg-type]
+        region="us-east-1",
+        service="ec2",
+        operation="DescribeInstances",
+        params={},
+        max_items=1,
+    )
+    stubber.deactivate()
+
+    assert "more results exist" in response[catalog.TRUNCATED_KEY]
+    # The continuation token itself is an implementation detail, not an answer.
+    assert "NextToken" not in response
+
+
+def test_execute_call_uses_single_shot_for_unpaginated_operation() -> None:
+    """Operations botocore cannot paginate still work through the same entry point."""
+    client = boto3.client("sts", region_name="us-east-1")
+    stubber = Stubber(client)
+    stubber.add_response(
+        "get_caller_identity",
+        {"Account": "111111111111", "Arn": "arn:aws:iam::111111111111:role/Example"},
+        {},
+    )
+    stubber.activate()
+
+    response = catalog.execute_call(
+        session=_FakeSession(client),  # type: ignore[arg-type]
+        region="us-east-1",
+        service="sts",
+        operation="GetCallerIdentity",
+        params={},
+    )
+    stubber.deactivate()
+
+    assert response["Account"] == "111111111111"

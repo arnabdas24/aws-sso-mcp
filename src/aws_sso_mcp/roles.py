@@ -97,12 +97,15 @@ def resolve_role(
     if len(granted_roles) == 1:
         return RoleResolution(role=granted_roles[0], source="sole-grant")
 
-    reason = (
-        "no environment mapping matched and multiple roles are granted"
-        if env is None
-        else f"account classified as environment {env.name!r} but no configured role/fallback "
-        "pattern matched a granted role"
-        if len(granted_roles) != 1
-        else "no role could be determined"
-    )
+    # Only reachable when no role was resolved, which implies len(granted_roles)
+    # != 1 - the single-grant case returned above.
+    if not granted_roles:
+        reason = "no roles are granted to you on this account"
+    elif env is None:
+        reason = "no environment mapping matched and multiple roles are granted"
+    else:
+        reason = (
+            f"account classified as environment {env.name!r} but no configured role or "
+            "fallback pattern matched a granted role"
+        )
     raise RoleResolutionError(account_id, account_name, reason, granted_roles)

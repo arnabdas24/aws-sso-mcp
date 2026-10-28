@@ -49,10 +49,6 @@ class NoTokenError(McpError):
     """Raised when a valid SSO token is required but none is cached and auto-login is disabled."""
 
 
-class AuthPendingError(McpError):
-    """Raised (non-fatal) while a device-authorization flow is awaiting browser approval."""
-
-
 class RoleResolutionError(McpError):
     """Raised when a role cannot be determined for an account (no mapping, no grant, ambiguous)."""
 
@@ -70,19 +66,38 @@ class RoleResolutionError(McpError):
         self.available = available
 
 
-class OperationDeniedError(McpError):
-    """Raised when a requested AWS operation is a mutating call or otherwise disallowed."""
-
-
 class RegionError(McpError):
-    """Raised for an unknown or unresolvable region."""
+    """Raised for a missing, unknown, or unresolvable region."""
+
+
+# AWS error codes that mean "these credentials are not allowed to do this".
+# A stale cached role is the most common cause, so the server treats these as a
+# signal to drop its caches and retry once rather than as a terminal failure.
+_ACCESS_DENIED_CODES = frozenset(
+    {
+        "AccessDenied",
+        "AccessDeniedException",
+        "UnauthorizedOperation",
+        "UnauthorizedException",
+        "ForbiddenException",
+        "InvalidClientTokenId",
+        "ExpiredToken",
+        "ExpiredTokenException",
+    }
+)
 
 
 class AwsCallError(McpError):
-    """Raised for a clean-message wrapper around any AWS-side call failure.
+    """A clean-message wrapper around any AWS-side call failure.
 
-    Never constructed from a raw exception's ``str()``/``repr()`` directly -
-    callers extract only the AWS error code/message fields they need.
+    Never constructed from a raw exception's ``str()`` or ``repr()``: callers
+    extract only the AWS error code and message, because botocore exceptions can
+    embed partial request and response data.
+
+    Attributes:
+        service: The boto3 service name the call was made against.
+        operation: The PascalCase operation name.
+        code: The AWS error code, e.g. ``"AccessDenied"`` or ``"Throttling"``.
     """
 
     def __init__(self, service: str, operation: str, code: str, message: str) -> None:
@@ -90,3 +105,12 @@ class AwsCallError(McpError):
         self.service = service
         self.operation = operation
         self.code = code
+
+    @property
+    def is_access_denied(self) -> bool:
+        """Whether this failure looks like a permissions or expired-credential problem.
+
+        Used to decide whether invalidating the cached role and credentials and
+        retrying once is worth attempting.
+        """
+        return self.code in _ACCESS_DENIED_CODES

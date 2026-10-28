@@ -32,7 +32,6 @@ def _config(tmp_path: Path) -> Config:
         },
         default_org="org1",
         cache_ttl_hours=12,
-        allow_secret_values=False,
         log_level="INFO",
         source_path=tmp_path / "config.toml",
     )

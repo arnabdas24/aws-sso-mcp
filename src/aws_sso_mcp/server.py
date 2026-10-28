@@ -1,112 +1,172 @@
-"""aws-sso-mcp entry point: MCP server exposing SSO org/account tools.
+"""aws-sso-mcp entry point: the MCP tools exposed to a chat client.
 
-Standalone - no dependency on aws-sso-orchestrator. Session tools (org
-switching, login/token status, account search, cache management) plus the
-generic AWS query tool (``aws_query``) that fans a read-only AWS API call
-out across every account a selector resolves to, using deterministic role
-resolution and a two-lane concurrent executor.
+This module is deliberately thin. Each tool validates its own arguments, then
+delegates: session and cache tools to :class:`~aws_sso_mcp.state.AppState`, and
+the two account-touching tools (:func:`aws_query` and :func:`run_dag`) to the
+shared pipeline in :mod:`aws_sso_mcp.fanout`. All the machinery those two have
+in common - scope resolution, blast-radius limits, SSO pre-flight, role warm-up,
+concurrency, retries, auditing, and output shaping - lives in that one place
+rather than being duplicated here.
+
+Authorization model: AWS IAM is the sole boundary. Any operation the assumed
+role can perform, read or mutating, is dispatched and AWS decides the outcome.
+Nothing is refused locally; a role without permission simply gets AccessDenied
+back from AWS, surfaced as a clean error.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import argparse
+import threading
+from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 
-from .audit import append as audit_append
-from .audit import new_entry as audit_new_entry
+from . import __version__
 from .config import PortalConfig, load_config
-from .engine.catalog import execute_read, validate_operation
+from .engine.catalog import execute_call
 from .engine.dag import DagError, Step
 from .engine.dag import run_dag as execute_dag
 from .errors import McpError, RoleResolutionError
-from .hardening import cap_value
-from .planner import resolve_targets
-from .redact import redact, redact_value
+from .fanout import AccountContext, AccountSelector, run_fanout
+from .logging_setup import bind_context, get_logger
+from .logging_setup import configure as configure_logging
+from .redact import redact
 from .roles import resolve_role
 from .sso.device_auth import get_access_token
 from .sso.device_auth import login as sso_login
 from .sso.device_auth import token_status as sso_token_status
 from .state import AppState
 
+logger = get_logger(__name__)
+
 app = MCPServer("aws-sso-mcp")
+
+# The server runs as one process per client session, so a module-level
+# singleton is the correctly-scoped place for runtime state: it is created on
+# the first tool call and disappears when the session ends.
 _state: AppState | None = None
+_state_lock = threading.Lock()
 
 
 def _get_state() -> AppState:
+    """Return the process-wide :class:`AppState`, building it on first use.
+
+    Construction is guarded by a lock because MCP dispatches tool calls onto a
+    worker-thread pool: two calls arriving together would otherwise each build
+    their own state, producing two SQLite connection pools and two credential
+    brokers that silently fail to share any cached work.
+    """
     global _state
-    if _state is None:
-        _state = AppState.build(load_config())
-    return _state
+    if _state is not None:
+        return _state
+
+    with _state_lock:
+        # Re-check inside the lock: another thread may have just built it.
+        if _state is None:
+            cfg = load_config()
+            configure_logging(cfg.log_level)
+            logger.info(
+                "aws-sso-mcp starting: orgs=%s default=%s cache_ttl=%.1fh",
+                sorted(cfg.portals),
+                cfg.default_org,
+                cfg.cache_ttl_hours,
+            )
+            _state = AppState.build(cfg)
+        return _state
+
+
+def _safe(fn: Callable[[], dict[str, Any]], ctx: Context | None = None) -> dict[str, Any]:
+    """Run a tool body, converting any failure into a clean error dict.
+
+    Two things happen here:
+
+    * The MCP ``Context`` is bound to a contextvar for the duration of the
+      call, so ordinary ``logger`` calls anywhere in the stack are forwarded to
+      the user's chat UI.
+    * Every exception is caught. :class:`McpError` subclasses are already
+      user-facing and are returned as-is. Anything else is unexpected, so it is
+      logged with a full traceback for the operator and returned to the client
+      as a short, redacted message - an unhandled exception would otherwise
+      surface as a raw traceback that both reads badly and risks echoing
+      internal details back to the model.
+
+    Args:
+        fn: The tool body to run.
+        ctx: The MCP ``Context`` for this call, if the tool accepts one.
+
+    Returns:
+        Either the tool's result or ``{"error": ...}``.
+    """
+    with bind_context(ctx):
+        try:
+            return fn()
+        except McpError as exc:
+            logger.warning("Tool returned error: %s", exc)
+            return {"error": redact(str(exc))}
+        except Exception as exc:
+            # Deliberately broad: this is the MCP tool boundary. An unexpected
+            # exception escaping here would surface to the client as a
+            # protocol-level failure with a raw traceback, so everything is
+            # caught, logged with its traceback, and returned as data.
+            logger.exception("Unexpected failure in tool")
+            return {
+                "error": redact(f"Unexpected {type(exc).__name__}: {exc}"),
+                "hint": "This is a bug in aws-sso-mcp; the server log has the full traceback.",
+            }
+
+
+def _selector(
+    org: str | None = None,
+    orgs: list[str] | None = None,
+    account_name: str | None = None,
+    account_names: list[str] | None = None,
+    account_id: str | None = None,
+    account_ids: list[str] | None = None,
+    name_contains: str | None = None,
+    environment: str | None = None,
+    exclude_account_ids: list[str] | None = None,
+    exclude_account_names: list[str] | None = None,
+    role: str | None = None,
+) -> AccountSelector:
+    """Collect the account-selector arguments shared by the fan-out tools."""
+    return AccountSelector(
+        org=org,
+        orgs=orgs,
+        account_name=account_name,
+        account_names=account_names,
+        account_id=account_id,
+        account_ids=account_ids,
+        name_contains=name_contains,
+        environment=environment,
+        exclude_account_ids=exclude_account_ids,
+        exclude_account_names=exclude_account_names,
+        role=role,
+    )
 
 
 def _token_getter(state: AppState, portal: PortalConfig) -> Callable[[], str]:
-    """Build a lazily-invoked access-token getter bound to one portal."""
+    """Build a lazily-invoked access-token getter bound to one portal.
+
+    Used by cache refreshes, which should only trigger an SSO lookup if the
+    cache actually turns out to be stale.
+
+    ``auto_login=False`` keeps :func:`login` the only tool that can ever open a
+    browser: a tool that silently started a device-authorization flow would
+    block for as long as it took the user to notice and approve it. Callers
+    get :class:`NoTokenError` naming the ``login()`` call to make instead.
+    """
 
     def _get() -> str:
-        return get_access_token(state.state_dir, portal)
+        return get_access_token(state.state_dir, portal, auto_login=False)
 
     return _get
 
 
-def _org_token_getter(state: AppState) -> Callable[[str], str]:
-    """Build a token getter keyed by org name, for planner.resolve_targets."""
-
-    def _get(org_name: str) -> str:
-        return get_access_token(state.state_dir, state.require_portal(org_name))
-
-    return _get
-
-
-def _progress_reporter(ctx: Context | None, verb: str) -> Callable[[int, int], None] | None:
-    """Build a fan-out progress callback that reports through MCP, if a Context was injected.
-
-    The tool body itself runs on an AnyIO worker thread (MCPServer dispatches
-    sync tool functions via ``anyio.to_thread.run_sync``), but ``fan_out``'s
-    per-target callback fires on its own short-lived *dispatch* pool threads
-    nested one level deeper - those have no AnyIO worker-thread identity of
-    their own, so a plain ``anyio.from_thread.run()`` call from inside them
-    would raise. AnyIO stashes the current worker thread's event-loop token
-    in a thread-local (``threadlocals.current_token``) the moment
-    ``to_thread.run_sync`` starts it - we read that here (only valid on the
-    worker thread that is invoking this tool) and pass it explicitly on
-    every nested call, which works from any thread.
-
-    Best-effort only - any failure to report progress (missing token,
-    closed event loop, disconnected client, ...) is swallowed; it must
-    never affect the underlying query.
-    """
-    if ctx is None:
-        return None
-
-    import anyio.from_thread
-
-    try:
-        token = anyio.from_thread.threadlocals.current_token  # type: ignore[attr-defined]
-    except AttributeError:
-        return None
-
-    def _report(done: int, total: int) -> None:
-        anyio.from_thread.run(
-            ctx.report_progress,
-            float(done),
-            float(total),
-            f"{verb} {done}/{total} accounts",
-            token=token,
-        )
-
-    return _report
-
-
-def _safe[T](fn: Callable[[], T]) -> T | dict[str, str]:
-    """Run a tool body, converting any McpError into a clean dict, never a raw traceback."""
-    try:
-        return fn()
-    except McpError as exc:
-        return {"error": redact(str(exc))}
+# ---------------------------------------------------------------- session tools
 
 
 @app.tool()
@@ -115,9 +175,8 @@ def orgs_list() -> dict[str, Any]:
 
     def _run() -> dict[str, Any]:
         state = _get_state()
-        active = state.get_active_org()
         return {
-            "active_org": active,
+            "active_org": state.get_active_org(),
             "orgs": [
                 {"name": name, "start_url": portal.start_url, "sso_region": portal.sso_region}
                 for name, portal in sorted(state.config.portals.items())
@@ -129,7 +188,7 @@ def orgs_list() -> dict[str, Any]:
 
 @app.tool()
 def use_org(org: str) -> dict[str, Any]:
-    """Set the active org for the rest of this session (does not affect one-off org= overrides)."""
+    """Set the active org for this session (one-off org= overrides still win)."""
 
     def _run() -> dict[str, Any]:
         state = _get_state()
@@ -150,12 +209,7 @@ def use_org(org: str) -> dict[str, Any]:
 @app.tool()
 def current_org() -> dict[str, Any]:
     """Report the currently active org, if any."""
-
-    def _run() -> dict[str, Any]:
-        state = _get_state()
-        return {"active_org": state.get_active_org()}
-
-    return _safe(_run)
+    return _safe(lambda: {"active_org": _get_state().get_active_org()})
 
 
 @app.tool()
@@ -174,7 +228,7 @@ def org_status(org: str | None = None) -> dict[str, Any]:
             "token_reason": status.reason,
             "cached_accounts": sync.account_count,
             "last_full_sync": sync.last_full_sync.isoformat() if sync.last_full_sync else None,
-            "cache_stale": state.cache.is_stale(portal.name),
+            "cache_stale": state.cache.state_is_stale(sync),
         }
 
     return _safe(_run)
@@ -186,34 +240,42 @@ def token_status(org: str | None = None) -> dict[str, Any]:
 
     def _run() -> dict[str, Any]:
         state = _get_state()
-        portal = state.resolve_org(org)
-        status = sso_token_status(state.state_dir, portal.name)
-        return asdict(status)
+        return asdict(sso_token_status(state.state_dir, state.resolve_org(org).name))
 
     return _safe(_run)
 
 
 @app.tool()
-def login(org: str | None = None) -> dict[str, Any]:
-    """Authenticate to an org via SSO device authorization (opens a browser for approval)."""
+def login(org: str | None = None, ctx: Context | None = None) -> dict[str, Any]:
+    """Authenticate to an org via SSO device authorization (opens a browser for approval).
+
+    This is the only tool that will ever open a browser. Queries never start a
+    sign-in on your behalf; they fail with a message telling you to call this
+    first, so a browser window never appears unexpectedly mid-query.
+    """
 
     def _run() -> dict[str, Any]:
         state = _get_state()
         portal = state.resolve_org(org)
-        status = sso_login(state.state_dir, portal)
-        return asdict(status)
+        logger.info("Starting device-auth login for org=%s", portal.name)
+        return asdict(sso_login(state.state_dir, portal))
 
-    return _safe(_run)
+    return _safe(_run, ctx)
+
+
+# ------------------------------------------------------------- directory tools
 
 
 @app.tool()
-def refresh_accounts(org: str | None = None, all_orgs: bool = False) -> dict[str, Any]:
+def refresh_accounts(
+    org: str | None = None, all_orgs: bool = False, ctx: Context | None = None
+) -> dict[str, Any]:
     """Force a refresh of the cached account directory for one org, or every configured org."""
 
     def _run() -> dict[str, Any]:
         state = _get_state()
         targets = list(state.config.portals) if all_orgs else [state.resolve_org(org).name]
-        results = []
+        refreshed = []
         for name in targets:
             portal = state.require_portal(name)
             sync = state.cache.ensure_fresh(
@@ -222,7 +284,7 @@ def refresh_accounts(org: str | None = None, all_orgs: bool = False) -> dict[str
                 access_token_getter=_token_getter(state, portal),
                 force=True,
             )
-            results.append(
+            refreshed.append(
                 {
                     "org": name,
                     "account_count": sync.account_count,
@@ -231,69 +293,30 @@ def refresh_accounts(org: str | None = None, all_orgs: bool = False) -> dict[str
                     else None,
                 }
             )
-        return {"refreshed": results}
+        return {"refreshed": refreshed}
 
-    return _safe(_run)
+    return _safe(_run, ctx)
 
 
 @app.tool()
 def cache_status(org: str | None = None) -> dict[str, Any]:
     """Report cache freshness for one org, or every configured org."""
 
+    def _describe(state: AppState, name: str) -> dict[str, Any]:
+        """Summarise one org's cache, reading its sync row exactly once."""
+        sync = state.cache.sync_state(name)
+        last_sync = sync.last_full_sync
+        return {
+            "org": name,
+            "account_count": sync.account_count,
+            "last_full_sync": last_sync.isoformat() if last_sync is not None else None,
+            "stale": state.cache.state_is_stale(sync),
+        }
+
     def _run() -> dict[str, Any]:
         state = _get_state()
         targets = [state.resolve_org(org).name] if org is not None else list(state.config.portals)
-        out = []
-        for name in targets:
-            sync = state.cache.sync_state(name)
-            out.append(
-                {
-                    "org": name,
-                    "account_count": sync.account_count,
-                    "last_full_sync": sync.last_full_sync.isoformat()
-                    if sync.last_full_sync
-                    else None,
-                    "stale": state.cache.is_stale(name),
-                }
-            )
-        return {"orgs": out}
-
-    return _safe(_run)
-
-
-@app.tool()
-def config_show() -> dict[str, Any]:
-    """Show the resolved, loaded configuration (no secrets are ever stored in it)."""
-
-    def _run() -> dict[str, Any]:
-        state = _get_state()
-        cfg = state.config
-        return {
-            "source_path": str(cfg.source_path),
-            "default_org": cfg.default_org,
-            "cache_ttl_hours": cfg.cache_ttl_hours,
-            "allow_secret_values": cfg.allow_secret_values,
-            "log_level": cfg.log_level,
-            "orgs": {
-                name: {
-                    "start_url": portal.start_url,
-                    "sso_region": portal.sso_region,
-                    "environments": list(portal.environments),
-                }
-                for name, portal in cfg.portals.items()
-            },
-        }
-
-    return _safe(_run)
-
-
-@app.tool()
-def config_validate() -> dict[str, Any]:
-    """Re-load and validate the config file, reporting any errors without applying them."""
-
-    def _run() -> dict[str, Any]:
-        cfg = load_config()
-        return {"valid": True, "source_path": str(cfg.source_path), "orgs": sorted(cfg.portals)}
+        return {"orgs": [_describe(state, name) for name in targets]}
 
     return _safe(_run)
 
@@ -305,11 +328,15 @@ def search_accounts(
     account_id: str | None = None,
     org: str | None = None,
     all_orgs: bool = False,
+    limit: int = 200,
+    ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Search the cached account directory by exact name, substring, or account id.
 
-    Refreshes the cache automatically (per-org, 12h threshold) before
-    searching if it is missing or stale.
+    The cache is refreshed automatically per org if it is missing or older than
+    the configured TTL. ``name_contains`` is a case-insensitive substring and
+    behaves identically to the ``name_contains`` selector on ``aws_query``, so
+    what you find here is exactly what a query will target.
     """
 
     def _run() -> dict[str, Any]:
@@ -325,33 +352,45 @@ def search_accounts(
             )
 
         matches = state.cache.search_accounts(
-            orgs=targets, name=name, name_contains=name_contains, account_id=account_id
+            orgs=targets,
+            name=name,
+            name_contains=name_contains,
+            account_id=account_id,
+            # Fetch one extra row so we can tell "exactly at the limit" from
+            # "there were more", without a second COUNT query.
+            limit=limit + 1,
         )
-        return {
+        truncated = len(matches) > limit
+        response: dict[str, Any] = {
             "matches": [
                 {"org": org_name, "account_id": acct.account_id, "account_name": acct.account_name}
-                for org_name, acct in matches
-            ]
+                for org_name, acct in matches[:limit]
+            ],
+            "truncated": truncated,
         }
+        if truncated:
+            response["warning"] = (
+                f"More than {limit} accounts matched; narrow the search or raise limit."
+            )
+        return response
 
-    return _safe(_run)
+    return _safe(_run, ctx)
 
 
 @app.tool()
 def list_roles(
     account_id: str, org: str | None = None, force_refresh: bool = False
 ) -> dict[str, Any]:
-    """List the IAM roles granted to the caller on one account, via the account's SSO portal."""
+    """List the IAM roles granted to you on one account, via that account's SSO portal."""
 
     def _run() -> dict[str, Any]:
         state = _get_state()
         portal = state.resolve_org(org)
-        token = get_access_token(state.state_dir, portal)
         roles = state.cache.roles_for_account(
             portal.name,
             account_id,
             region=portal.sso_region,
-            access_token=token,
+            access_token=get_access_token(state.state_dir, portal, auto_login=False),
             force=force_refresh,
         )
         return {"org": portal.name, "account_id": account_id, "roles": roles}
@@ -363,19 +402,21 @@ def list_roles(
 def explain_role_selection(
     account_id: str, account_name: str, org: str | None = None, role: str | None = None
 ) -> dict[str, Any]:
-    """Dry-run deterministic role resolution for one account (no service call is made).
+    """Dry-run deterministic role resolution for one account; makes no service call.
 
-    Shows exactly which role would be assumed and why - explicit override,
-    TOML environment mapping, or the sole granted role - without ever
-    letting the model itself choose.
+    Shows exactly which role would be assumed and why - explicit override, TOML
+    environment mapping, or sole granted role - without the model ever choosing
+    a role itself.
     """
 
     def _run() -> dict[str, Any]:
         state = _get_state()
         portal = state.resolve_org(org)
-        token = get_access_token(state.state_dir, portal)
         granted = state.cache.roles_for_account(
-            portal.name, account_id, region=portal.sso_region, access_token=token
+            portal.name,
+            account_id,
+            region=portal.sso_region,
+            access_token=get_access_token(state.state_dir, portal, auto_login=False),
         )
         try:
             resolution = resolve_role(
@@ -398,6 +439,9 @@ def explain_role_selection(
     return _safe(_run)
 
 
+# ------------------------------------------------------------- the query tools
+
+
 @app.tool()
 def aws_query(
     service: str,
@@ -415,160 +459,112 @@ def aws_query(
     exclude_account_ids: list[str] | None = None,
     exclude_account_names: list[str] | None = None,
     role: str | None = None,
+    max_accounts: int | None = None,
+    max_items: int | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
-    """Run one read-only AWS API call across every account a selector resolves to.
+    """Run one AWS API call across every account a selector resolves to.
 
-    ``service``/``operation``/``params`` follow the AWS CLI/botocore shape,
+    ``service``/``operation``/``params`` follow the AWS CLI and botocore shape,
     e.g. ``service="ec2"``, ``operation="DescribeInstances"``,
     ``params={"Filters": [{"Name": "instance-state-name", "Values": ["stopped"]}]}``.
-    Only ``Describe*``/``List*``/``Get*``/``Head*`` (plus a small explicit
-    allowlist) are permitted; value-returning secret reads additionally
-    require ``allow_secret_values = true`` in config. ``region`` is always
-    required and never defaulted. Account selectors (``org``/``orgs``/
-    ``account_name``/``account_names``/``account_id``/``account_ids``/
-    ``name_contains``/``environment``/exclusions) resolve which accounts
-    are touched; if none are given, every account in the active org is
-    used. The model never chooses which IAM role to assume - pass
-    ``role=`` to override the deterministic TOML/sole-grant resolution.
+    Paginated operations are followed to completion automatically, so results
+    are complete rather than a silent first page. If a result is truncated,
+    raise ``max_items`` to collect more from each account.
+
+    ``region`` is always required and never defaulted. Account selectors decide
+    which accounts are touched; with none given, every account in the active org
+    is targeted, subject to the configured blast-radius cap. The model never
+    picks which IAM role to assume - pass ``role=`` to override the
+    deterministic TOML/sole-grant resolution.
+
+    Any operation the assumed role may perform is dispatched - reads, writes,
+    deletes, secret reads, all of it - with AWS IAM as the sole authorization
+    boundary. Nothing is refused locally; if the role lacks permission, AWS
+    returns AccessDenied and that is what comes back.
     """
 
     def _run() -> dict[str, Any]:
         state = _get_state()
         call_params = params or {}
-        # Fail fast on a mutating/ungated-secret operation before touching the
-        # network at all - no credential minting, no SSO auth, no account lookups.
-        validate_operation(
-            service=service,
-            operation=operation,
-            params=call_params,
-            allow_secret_values=state.config.allow_secret_values,
-        )
 
-        no_selectors_given = not any(
-            [
-                org,
-                orgs,
-                account_name,
-                account_names,
-                account_id,
-                account_ids,
-                name_contains,
-                environment,
-            ]
-        )
-        # With zero selectors, default to the active org only - never silently
-        # fan out across every configured org (hundreds of accounts) by accident.
-        effective_org = state.resolve_org(None).name if no_selectors_given else org
-
-        targets = resolve_targets(
-            config=state.config,
-            cache=state.cache,
-            access_token_getter=_org_token_getter(state),
-            org=effective_org,
-            orgs=orgs,
-            account_name=account_name,
-            account_names=account_names,
-            account_id=account_id,
-            account_ids=account_ids,
-            name_contains=name_contains,
-            environment=environment,
-            exclude_account_ids=exclude_account_ids,
-            exclude_account_names=exclude_account_names,
-        )
-        if not targets:
-            return {
-                "target_count": 0,
-                "results": [],
-                "warning": "no accounts matched the given selectors",
-            }
-
-        resolution_by_key: dict[tuple[str, str], Any] = {}
-
-        def credential_fn(t_org: str, t_account_id: str, t_account_name: str) -> Any:
-            portal = state.require_portal(t_org)
-            token = get_access_token(state.state_dir, portal)
-            granted = state.cache.roles_for_account(
-                t_org, t_account_id, region=portal.sso_region, access_token=token
-            )
-            resolution = resolve_role(
-                portal=portal,
-                account_id=t_account_id,
-                account_name=t_account_name,
-                granted_roles=granted,
-                explicit_role=role,
-            )
-            resolution_by_key[(t_org, t_account_id)] = resolution
-            return state.broker.get_session(
-                org=t_org,
-                region=portal.sso_region,
-                account_id=t_account_id,
-                role=resolution.role,
-                access_token=token,
-            )
-
-        def service_fn(
-            t_org: str, t_account_id: str, t_account_name: str, session: Any
-        ) -> dict[str, Any]:
-            return execute_read(
-                session=session,
-                region=region,
-                service=service,
-                operation=operation,
-                params=call_params,
-                allow_secret_values=state.config.allow_secret_values,
-            )
-
-        fanout_targets = [(t.org, t.account_id, t.account_name) for t in targets]
-        outcomes = state.executor.fan_out(
-            fanout_targets,
-            credential_fn=credential_fn,
-            service_fn=service_fn,
-            on_progress=_progress_reporter(ctx, "queried"),
-        )
-
-        results: list[dict[str, Any]] = []
-        for outcome in outcomes:
-            resolution = resolution_by_key.get((outcome.org, outcome.account_id))
-            audit_append(
-                state.audit_log_path,
-                audit_new_entry(
-                    org=outcome.org,
-                    account_id=outcome.account_id,
-                    account_name=outcome.account_name,
-                    role=resolution.role if resolution else None,
-                    role_source=resolution.source if resolution else None,
-                    region=region,
+        def _call(account: AccountContext) -> dict[str, Any]:
+            """Run the single API call for one account, recording it for the audit log."""
+            try:
+                response = execute_call(
+                    session=account.session,
+                    region=account.region,
                     service=service,
                     operation=operation,
-                    ok=outcome.ok,
-                    error=outcome.error,
-                ),
-            )
-            if outcome.ok:
-                results.append(
-                    {
-                        "org": outcome.org,
-                        "account_id": outcome.account_id,
-                        "account_name": outcome.account_name,
-                        "role": resolution.role if resolution else None,
-                        "ok": True,
-                        "data": cap_value(redact_value(outcome.value)),
-                    }
+                    params=call_params,
+                    max_items=account.max_items,
                 )
-            else:
-                results.append(
-                    {
-                        "org": outcome.org,
-                        "account_id": outcome.account_id,
-                        "account_name": outcome.account_name,
-                        "ok": False,
-                        "error": redact(outcome.error or "unknown error"),
-                    }
-                )
-        return {"target_count": len(results), "results": results}
+            except McpError as exc:
+                account.record(service, operation, ok=False, error=str(exc))
+                raise
+            account.record(service, operation, ok=True)
+            return response
 
-    return _safe(_run)
+        logger.info("aws_query %s:%s region=%s", service, operation, region)
+        return run_fanout(
+            state,
+            selector=_selector(
+                org=org,
+                orgs=orgs,
+                account_name=account_name,
+                account_names=account_names,
+                account_id=account_id,
+                account_ids=account_ids,
+                name_contains=name_contains,
+                environment=environment,
+                exclude_account_ids=exclude_account_ids,
+                exclude_account_names=exclude_account_names,
+                role=role,
+            ),
+            region=region,
+            per_account=_call,
+            audit_label=(service, operation),
+            verb="queried",
+            ctx=ctx,
+            max_accounts=max_accounts,
+            max_items=max_items,
+        )
+
+    return _safe(_run, ctx)
+
+
+def _parse_steps(steps: list[dict[str, Any]]) -> list[Step]:
+    """Turn raw step dicts from the client into validated :class:`Step` objects.
+
+    Args:
+        steps: Raw step dicts as supplied to :func:`run_dag`.
+
+    Returns:
+        The parsed steps, in the order given.
+
+    Raises:
+        DagError: If a step is missing a required key. Raised as a clean,
+            user-facing error rather than letting a ``KeyError`` escape.
+    """
+    parsed = []
+    for index, raw in enumerate(steps):
+        missing = {"id", "service", "operation"} - raw.keys()
+        if missing:
+            raise DagError(
+                f"step {index} is missing required key(s): {sorted(missing)}. "
+                "Every step needs 'id', 'service', and 'operation'."
+            )
+        parsed.append(
+            Step(
+                id=raw["id"],
+                service=raw["service"],
+                operation=raw["operation"],
+                params=raw.get("params", {}),
+                extract=raw.get("extract"),
+                depends_on=tuple(raw.get("depends_on", ())),
+            )
+        )
+    return parsed
 
 
 @app.tool()
@@ -586,192 +582,176 @@ def run_dag(
     exclude_account_ids: list[str] | None = None,
     exclude_account_names: list[str] | None = None,
     role: str | None = None,
+    max_accounts: int | None = None,
+    max_items: int | None = None,
     ctx: Context | None = None,
 ) -> dict[str, Any]:
     """Run a small declarative multi-step query DAG against every resolved account.
 
-    Each entry in ``steps`` is ``{"id": ..., "service": ..., "operation": ...,
-    "params": {...}, "extract": "...", "depends_on": [...]}``.
-    A later step's ``params`` may reference an earlier step's extracted
-    output anywhere via ``{"$ref": "<step_id>"}`` - there is no expression
-    language and nothing is ever evaluated as code. Each resolved account
-    runs its own independent copy of the whole DAG (one credential mint per
-    account, not per step). Same read-only/secret-value rules as
-    ``aws_query`` apply to every step.
+    Each entry in ``steps`` is
+    ``{"id": ..., "service": ..., "operation": ..., "params": {...},
+    "extract": "...", "depends_on": [...]}``.
+
+    A later step's ``params`` may reference an earlier step's extracted output
+    anywhere a literal would go, via ``{"$ref": "<step_id>"}``. There is no
+    expression language and nothing is ever evaluated as code.
+
+    Every resolved account runs its own independent copy of the whole DAG, with
+    one credential mint per account rather than one per step. As with
+    ``aws_query``, AWS IAM is the sole authorization boundary for every step,
+    and ``max_items`` raises the per-account pagination ceiling for every step.
     """
 
     def _run() -> dict[str, Any]:
         state = _get_state()
-        try:
-            parsed_steps = [
-                Step(
-                    id=s["id"],
-                    service=s["service"],
-                    operation=s["operation"],
-                    params=s.get("params", {}),
-                    extract=s.get("extract"),
-                    depends_on=tuple(s.get("depends_on", ())),
-                )
-                for s in steps
-            ]
-        except KeyError as exc:
-            return {"error": f"each step requires an 'id'/'service'/'operation': missing {exc}"}
+        parsed_steps = _parse_steps(steps)
 
-        # Fail fast on any mutating/ungated-secret step before touching the
-        # network at all - no credential minting, no SSO auth, no account lookups.
-        for step in parsed_steps:
-            validate_operation(
-                service=step.service,
-                operation=step.operation,
-                params=step.params,
-                allow_secret_values=state.config.allow_secret_values,
-            )
+        def _call_dag(account: AccountContext) -> dict[str, Any]:
+            """Run the whole DAG for one account, recording each step for the audit log."""
 
-        no_selectors_given = not any(
-            [
-                org,
-                orgs,
-                account_name,
-                account_names,
-                account_id,
-                account_ids,
-                name_contains,
-                environment,
-            ]
-        )
-        effective_org = state.resolve_org(None).name if no_selectors_given else org
-
-        targets = resolve_targets(
-            config=state.config,
-            cache=state.cache,
-            access_token_getter=_org_token_getter(state),
-            org=effective_org,
-            orgs=orgs,
-            account_name=account_name,
-            account_names=account_names,
-            account_id=account_id,
-            account_ids=account_ids,
-            name_contains=name_contains,
-            environment=environment,
-            exclude_account_ids=exclude_account_ids,
-            exclude_account_names=exclude_account_names,
-        )
-        if not targets:
-            return {
-                "target_count": 0,
-                "results": [],
-                "warning": "no accounts matched the given selectors",
-            }
-
-        resolution_by_key: dict[tuple[str, str], Any] = {}
-
-        def credential_fn(t_org: str, t_account_id: str, t_account_name: str) -> Any:
-            portal = state.require_portal(t_org)
-            token = get_access_token(state.state_dir, portal)
-            granted = state.cache.roles_for_account(
-                t_org, t_account_id, region=portal.sso_region, access_token=token
-            )
-            resolution = resolve_role(
-                portal=portal,
-                account_id=t_account_id,
-                account_name=t_account_name,
-                granted_roles=granted,
-                explicit_role=role,
-            )
-            resolution_by_key[(t_org, t_account_id)] = resolution
-            return state.broker.get_session(
-                org=t_org,
-                region=portal.sso_region,
-                account_id=t_account_id,
-                role=resolution.role,
-                access_token=token,
-            )
-
-        def service_fn(
-            t_org: str, t_account_id: str, t_account_name: str, session: Any
-        ) -> dict[str, Any]:
-            def call(step: Step, resolved_params: dict[str, Any]) -> dict[str, Any]:
-                response = execute_read(
-                    session=session,
-                    region=region,
-                    service=step.service,
-                    operation=step.operation,
-                    params=resolved_params,
-                    allow_secret_values=state.config.allow_secret_values,
-                )
-                audit_append(
-                    state.audit_log_path,
-                    audit_new_entry(
-                        org=t_org,
-                        account_id=t_account_id,
-                        account_name=t_account_name,
-                        role=resolution_by_key[(t_org, t_account_id)].role,
-                        role_source=resolution_by_key[(t_org, t_account_id)].source,
-                        region=region,
+            def _call_step(step: Step, resolved_params: dict[str, Any]) -> dict[str, Any]:
+                try:
+                    response = execute_call(
+                        session=account.session,
+                        region=account.region,
                         service=step.service,
                         operation=step.operation,
-                        ok=True,
-                    ),
-                )
+                        params=resolved_params,
+                        max_items=account.max_items,
+                    )
+                except McpError as exc:
+                    account.record(step.service, step.operation, ok=False, error=str(exc))
+                    raise
+                account.record(step.service, step.operation, ok=True)
                 return response
 
             try:
-                return execute_dag(parsed_steps, call=call)
+                return execute_dag(parsed_steps, call=_call_step)
             except DagError as exc:
+                # A malformed DAG is the caller's mistake, not this account's
+                # failure, so report it in-band rather than as an AWS error.
                 return {"dag_error": str(exc)}
 
-        fanout_targets = [(t.org, t.account_id, t.account_name) for t in targets]
-        outcomes = state.executor.fan_out(
-            fanout_targets,
-            credential_fn=credential_fn,
-            service_fn=service_fn,
-            on_progress=_progress_reporter(ctx, "ran DAG on"),
+        logger.info("run_dag steps=%d region=%s", len(parsed_steps), region)
+        return run_fanout(
+            state,
+            selector=_selector(
+                org=org,
+                orgs=orgs,
+                account_name=account_name,
+                account_names=account_names,
+                account_id=account_id,
+                account_ids=account_ids,
+                name_contains=name_contains,
+                environment=environment,
+                exclude_account_ids=exclude_account_ids,
+                exclude_account_names=exclude_account_names,
+                role=role,
+            ),
+            region=region,
+            per_account=_call_dag,
+            audit_label=("(dag)", f"{len(parsed_steps)} steps"),
+            verb="ran DAG on",
+            ctx=ctx,
+            max_accounts=max_accounts,
+            max_items=max_items,
         )
 
-        results: list[dict[str, Any]] = []
-        for outcome in outcomes:
-            if outcome.ok:
-                results.append(
-                    {
-                        "org": outcome.org,
-                        "account_id": outcome.account_id,
-                        "account_name": outcome.account_name,
-                        "ok": True,
-                        "data": cap_value(redact_value(outcome.value)),
-                    }
-                )
-            else:
-                audit_append(
-                    state.audit_log_path,
-                    audit_new_entry(
-                        org=outcome.org,
-                        account_id=outcome.account_id,
-                        account_name=outcome.account_name,
-                        role=None,
-                        role_source=None,
-                        region=region,
-                        service="(dag)",
-                        operation="(dag)",
-                        ok=False,
-                        error=outcome.error,
-                    ),
-                )
-                results.append(
-                    {
-                        "org": outcome.org,
-                        "account_id": outcome.account_id,
-                        "account_name": outcome.account_name,
-                        "ok": False,
-                        "error": redact(outcome.error or "unknown error"),
-                    }
-                )
-        return {"target_count": len(results), "results": results}
+    return _safe(_run, ctx)
+
+
+# ----------------------------------------------------------- diagnostics tools
+
+
+@app.tool()
+def config_show() -> dict[str, Any]:
+    """Show the resolved, loaded configuration (it never contains secrets)."""
+
+    def _run() -> dict[str, Any]:
+        cfg = _get_state().config
+        perf = cfg.performance
+        return {
+            "source_path": str(cfg.source_path),
+            "default_org": cfg.default_org,
+            "cache_ttl_hours": cfg.cache_ttl_hours,
+            "log_level": cfg.log_level,
+            "performance": {
+                "credential_workers": perf.credential_workers,
+                "service_workers": perf.service_workers,
+                "per_target_timeout_seconds": perf.per_target_timeout_seconds,
+                "max_items_per_account": perf.max_items_per_account,
+                "max_accounts": perf.max_accounts,
+            },
+            "orgs": {
+                name: {
+                    "start_url": portal.start_url,
+                    "sso_region": portal.sso_region,
+                    "environments": list(portal.environments),
+                }
+                for name, portal in cfg.portals.items()
+            },
+        }
 
     return _safe(_run)
 
 
-def main() -> None:
-    """Console-script entry point (registered as ``aws-sso-mcp``)."""
+@app.tool()
+def config_validate() -> dict[str, Any]:
+    """Re-load and validate the config file, reporting errors without applying them."""
+
+    def _run() -> dict[str, Any]:
+        cfg = load_config()
+        return {"valid": True, "source_path": str(cfg.source_path), "orgs": sorted(cfg.portals)}
+
+    return _safe(_run)
+
+
+@app.tool()
+def perf_stats() -> dict[str, Any]:
+    """Report cache hit/miss counts and executor sizing for the running server.
+
+    Answers "why was that fan-out slow?" without turning on debug logging. A
+    high credential-broker miss rate points to short-lived sessions or role
+    churn; a high role-cache miss rate suggests the directory TTL is too short.
+    """
+
+    def _run() -> dict[str, Any]:
+        state = _get_state()
+        return {
+            "executor": {
+                "credential_workers": state.executor.credential_workers,
+                "service_workers": state.executor.service_workers,
+            },
+            "broker": state.broker.stats(),
+            "accounts_cache": state.cache.stats(),
+        }
+
+    return _safe(_run)
+
+
+def _parse_args(argv: Sequence[str] | None) -> None:
+    """Handle ``--version`` / ``--help``; the server itself takes no arguments.
+
+    Exists so the installed command can be smoke-tested (``aws-sso-mcp
+    --version``) without starting the stdio transport, which would block
+    waiting for an MCP client.
+    """
+    parser = argparse.ArgumentParser(
+        prog="aws-sso-mcp",
+        description="MCP server for AWS IAM Identity Center (SSO). Speaks MCP over stdio.",
+    )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
+    parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    """Console-script entry point, registered as ``aws-sso-mcp``."""
+    _parse_args(argv)
+    # Configure logging before anything else so startup messages from the MCP
+    # SDK and boto3 are captured too. The configured level is re-applied from
+    # the user's config on the first tool call.
+    configure_logging("INFO")
+    logger.info("aws-sso-mcp starting MCP stdio transport")
     app.run()
 
 

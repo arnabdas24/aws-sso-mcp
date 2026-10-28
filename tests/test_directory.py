@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import boto3
+import pytest
 from botocore.stub import Stubber
 
 from aws_sso_mcp.sso import directory
@@ -59,10 +60,8 @@ def test_list_accounts_error_wrapped(monkeypatch) -> None:
     stubber.activate()
     monkeypatch.setattr(directory, "_build_sso_client", lambda region: client)
 
-    try:
+    with pytest.raises(AwsCallError) as excinfo:
         directory.list_accounts("us-east-1", "tok")
-        raise AssertionError("expected AwsCallError")
-    except AwsCallError as exc:
-        assert exc.service == "sso"
-        assert exc.operation == "ListAccounts"
+    assert excinfo.value.service == "sso"
+    assert excinfo.value.operation == "ListAccounts"
     stubber.deactivate()

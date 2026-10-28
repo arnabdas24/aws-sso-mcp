@@ -6,7 +6,8 @@ import threading
 import time
 from pathlib import Path
 
-from aws_sso_mcp.cache.accounts import AccountCache
+from aws_sso_mcp.cache.accounts import AccountCache, SyncState
+from aws_sso_mcp.cache.db import SCHEMA_VERSION, connect
 from aws_sso_mcp.sso.directory import SsoAccount
 
 
@@ -165,3 +166,101 @@ def test_invalidate_role_forces_refetch(tmp_path: Path, monkeypatch) -> None:
     cache.invalidate_role("org1", "111", "DevRole")
     cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
     assert calls["n"] == 2
+
+
+# ---------------------------------------------------------- schema versioning
+
+
+def test_schema_version_is_recorded_once(tmp_path: Path) -> None:
+    db_path = tmp_path / "cache.db"
+    connect(db_path).close()
+    conn = connect(db_path)
+    rows = conn.execute("SELECT version FROM schema_version").fetchall()
+    conn.close()
+
+    assert [r["version"] for r in rows] == [SCHEMA_VERSION]
+
+
+def test_opening_a_cache_from_an_older_schema_rebuilds_it(tmp_path: Path, monkeypatch) -> None:
+    """A version mismatch must discard the cached tables, not limp along.
+
+    The stored version used to be written and never read again, which made it
+    pure dead data: any change to a table - or to the format of a stored
+    timestamp - would surface against a pre-existing cache file as a parse
+    error or a wrong answer rather than a clean rebuild. Everything here is
+    re-fetchable from SSO, so discarding costs one directory refresh.
+    """
+    db_path = tmp_path / "cache.db"
+    conn = connect(db_path)
+    conn.execute(
+        "INSERT INTO accounts (org, account_id, account_name, discovered_at) "
+        "VALUES ('org1', '111', 'stale-acct', 'not-a-timestamp-this-version-understands')"
+    )
+    conn.execute(
+        "INSERT INTO sync_state (org, last_full_sync, account_count) "
+        "VALUES ('org1', 'not-a-timestamp-this-version-understands', 1)"
+    )
+    # Pretend this file was written by an older build of the server.
+    conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION - 1,))
+    conn.close()
+
+    conn = connect(db_path)
+    accounts = conn.execute("SELECT * FROM accounts").fetchall()
+    version = conn.execute("SELECT version FROM schema_version").fetchone()["version"]
+    conn.close()
+
+    assert accounts == []
+    assert version == SCHEMA_VERSION
+
+
+def test_a_stale_cache_file_does_not_break_staleness_checks(tmp_path: Path) -> None:
+    """The end-to-end symptom the rebuild prevents: an unreadable timestamp.
+
+    Without the version check, a row written in the old naive-timestamp format
+    would reach ``_parse_stamp`` and raise ``ValueError`` on the very first
+    query against an upgraded install.
+    """
+    db_path = tmp_path / "cache.db"
+    conn = connect(db_path)
+    conn.execute(
+        "INSERT INTO sync_state (org, last_full_sync, account_count) "
+        "VALUES ('org1', '2024-01-01T00:00:00', 5)"
+    )
+    conn.execute("UPDATE schema_version SET version = ?", (SCHEMA_VERSION - 1,))
+    conn.close()
+
+    cache = AccountCache(db_path, ttl_hours=12)
+    assert cache.is_stale("org1") is True
+    assert cache.sync_state("org1").account_count == 0
+
+
+def test_matching_schema_version_keeps_cached_rows(tmp_path: Path, monkeypatch) -> None:
+    """The rebuild must only fire on a mismatch - a normal reopen keeps its data."""
+    cache = _make_cache(tmp_path)
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [SsoAccount(account_id="111", account_name="acct-a")],
+    )
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+
+    reopened = AccountCache(tmp_path / "cache.db", ttl_hours=12)
+    assert [a.account_name for a in reopened.accounts_for_org("org1")] == ["acct-a"]
+    assert reopened.is_stale("org1") is False
+
+
+def test_state_is_stale_reuses_an_already_read_row(tmp_path: Path, monkeypatch) -> None:
+    """Status surfaces read the sync row once and derive staleness from it.
+
+    Reading it twice was both wasteful and racy: a refresh landing between the
+    two reads could report a fresh ``last_full_sync`` next to ``stale: true``.
+    """
+    cache = _make_cache(tmp_path)
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [SsoAccount(account_id="111", account_name="acct-a")],
+    )
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+
+    state = cache.sync_state("org1")
+    assert cache.state_is_stale(state) is False
+    assert cache.state_is_stale(SyncState(org="org1", last_full_sync=None, account_count=0)) is True

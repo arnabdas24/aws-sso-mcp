@@ -30,7 +30,7 @@ def test_matches_unknown_mode_raises() -> None:
         _matches("x", "y", "bogus")
 
 
-@pytest.fixture()
+@pytest.fixture
 def portal() -> PortalConfig:
     return PortalConfig(
         name="org1",
@@ -164,3 +164,29 @@ def test_no_roles_granted_at_all(portal: PortalConfig) -> None:
             account_name="billing-sandbox",
             granted_roles=[],
         )
+
+
+def test_no_granted_roles_says_so_plainly() -> None:
+    """Reporting "multiple roles are granted" when zero are is actively misleading.
+
+    It sends the user looking for an ambiguity to disambiguate, when the real
+    answer is that they have no access to the account at all.
+    """
+    portal = PortalConfig(
+        name="org1",
+        start_url="https://example.awsapps.com/start",
+        sso_region="us-east-1",
+        environments={},
+    )
+    with pytest.raises(RoleResolutionError) as excinfo:
+        resolve_role(
+            portal=portal,
+            account_id="111111111111",
+            account_name="acct-a",
+            granted_roles=[],
+            explicit_role=None,
+        )
+
+    message = str(excinfo.value)
+    assert "no roles are granted" in message
+    assert "multiple roles" not in message

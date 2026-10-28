@@ -26,6 +26,13 @@ from typing import Any
 
 from .errors import ConfigError
 
+# Single source of truth for the per-account pagination ceiling: the default
+# for ``PerformanceConfig.max_items_per_account`` below, and the fallback used
+# by ``engine.catalog.execute_call`` when no explicit ceiling is threaded
+# through. Defined here rather than in the engine so that configuration
+# defaults live with the configuration.
+DEFAULT_MAX_ITEMS = 1000
+
 _ENV_CONFIG_PATH = "AWS_SSO_MCP_CONFIG"
 
 # Key name substrings that must never appear in the config file - this file
@@ -112,6 +119,40 @@ class PortalConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class PerformanceConfig:
+    """Tunable knobs for the multi-account fan-out executor.
+
+    Every field has a safe default; an operator only needs to override values
+    that do not fit their scale - very large orgs, tight SSO throttles, and so
+    on.
+
+    Attributes:
+        credential_workers: Size of the SSO/credential thread lane. Kept small
+            because SSO endpoints throttle aggressively.
+        service_workers: Size of the service-call thread lane. The main
+            throughput knob for a large fan-out.
+        per_target_timeout_seconds: How long one account's work may take,
+            excluding time spent queued behind other accounts. ``None``
+            disables the timeout.
+        progress_min_interval_seconds: Minimum gap between progress updates
+            sent to the MCP client.
+        max_items_per_account: Ceiling on items collected from a paginated
+            operation, per account. Prevents a single account from exhausting
+            the client's context window.
+        max_accounts: Ceiling on how many accounts one call may fan out to.
+            Guards against a mistyped selector silently touching every account
+            in the org.
+    """
+
+    credential_workers: int = 10
+    service_workers: int = 50
+    per_target_timeout_seconds: float | None = 60.0
+    progress_min_interval_seconds: float = 0.25
+    max_items_per_account: int = DEFAULT_MAX_ITEMS
+    max_accounts: int = 200
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Fully resolved aws-sso-mcp configuration.
 
@@ -120,33 +161,22 @@ class Config:
         default_org: The org made active at session start, if configured.
         cache_ttl_hours: Threshold before the account/role directory for an
             org is considered stale and eligible for a lazy refresh.
-        allow_secret_values: Whether value-returning "read" operations
-            (GetSecretValue, decrypted GetParameter, kms:Decrypt,
-            s3:GetObject, ...) are permitted at all. Metadata-only calls
-            (e.g. DescribeSecret) are unaffected by this flag either way.
         log_level: Logging level name.
+        performance: Executor concurrency and per-target timeout knobs.
         source_path: The config file that was loaded.
     """
 
     portals: dict[str, PortalConfig]
     default_org: str | None
     cache_ttl_hours: float
-    allow_secret_values: bool
     log_level: str
     source_path: Path
-
-
-# Known-safe keys that legitimately contain a forbidden substring as part of
-# an unrelated word (e.g. "secret_values" is a boolean feature flag, not a
-# place a secret value could be stored).
-_ALLOWED_KEYS = frozenset({"allow_secret_values"})
+    performance: PerformanceConfig = field(default_factory=PerformanceConfig)
 
 
 def _check_no_secrets(data: dict[str, Any], ctx: str) -> None:
     """Recursively reject any key whose name looks like it might hold a secret."""
     for key, value in data.items():
-        if key in _ALLOWED_KEYS:
-            continue
         lowered = str(key).lower()
         for bad in _FORBIDDEN_KEY_SUBSTRINGS:
             if bad in lowered:
@@ -224,6 +254,71 @@ def _parse_portal(name: str, data: dict[str, Any]) -> PortalConfig:
     )
 
 
+def _positive_int(raw: dict[str, Any], key: str, default: int, source: Path) -> int:
+    """Read a ``[performance]`` integer that must be at least 1.
+
+    Args:
+        raw: The ``[performance]`` table.
+        key: Key to read.
+        default: Value to use when the key is absent.
+        source: Config path, for error messages.
+
+    Returns:
+        The validated integer.
+
+    Raises:
+        ConfigError: If the value is not an integer, or is less than 1. Raised
+            instead of letting ``int()`` surface a bare ``ValueError``, so a
+            typo in the config produces an actionable message rather than a
+            traceback.
+    """
+    value = raw.get(key, default)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        raise ConfigError(f"{source}: [performance].{key} must be an integer >= 1")
+    return value
+
+
+def _parse_performance(raw: dict[str, Any], source: Path) -> PerformanceConfig:
+    """Parse and validate the optional ``[performance]`` table.
+
+    Args:
+        raw: The ``[performance]`` table, possibly empty.
+        source: Config path, for error messages.
+
+    Returns:
+        A fully validated :class:`PerformanceConfig`.
+
+    Raises:
+        ConfigError: If any value is of the wrong type or out of range.
+    """
+    timeout_raw = raw.get("per_target_timeout_seconds", 60.0)
+    # An explicit 0 (or null) is the documented way to disable the timeout.
+    if timeout_raw is None or timeout_raw == 0:
+        timeout: float | None = None
+    elif isinstance(timeout_raw, int | float) and not isinstance(timeout_raw, bool):
+        timeout = float(timeout_raw)
+    else:
+        raise ConfigError(
+            f"{source}: [performance].per_target_timeout_seconds must be a number, "
+            "or 0 to disable the timeout"
+        )
+
+    interval_raw = raw.get("progress_min_interval_seconds", 0.25)
+    if isinstance(interval_raw, bool) or not isinstance(interval_raw, int | float):
+        raise ConfigError(f"{source}: [performance].progress_min_interval_seconds must be a number")
+
+    return PerformanceConfig(
+        credential_workers=_positive_int(raw, "credential_workers", 10, source),
+        service_workers=_positive_int(raw, "service_workers", 50, source),
+        per_target_timeout_seconds=timeout,
+        progress_min_interval_seconds=float(interval_raw),
+        max_items_per_account=_positive_int(
+            raw, "max_items_per_account", DEFAULT_MAX_ITEMS, source
+        ),
+        max_accounts=_positive_int(raw, "max_accounts", 200, source),
+    )
+
+
 def load_config(path: Path | str | None = None) -> Config:
     """Load and validate the aws-sso-mcp TOML configuration.
 
@@ -269,17 +364,18 @@ def load_config(path: Path | str | None = None) -> Config:
     if not isinstance(cache_ttl_hours, int | float) or cache_ttl_hours < 0:
         raise ConfigError(f"{resolved}: cache_ttl_hours must be a non-negative number")
 
-    allow_secret_values = raw.get("allow_secret_values", False)
-    if not isinstance(allow_secret_values, bool):
-        raise ConfigError(f"{resolved}: allow_secret_values must be true or false")
-
     log_level = str(raw.get("log_level", "INFO")).upper()
+
+    perf_raw = raw.get("performance", {})
+    if not isinstance(perf_raw, dict):
+        raise ConfigError(f"{resolved}: [performance] must be a table")
+    performance = _parse_performance(perf_raw, resolved)
 
     return Config(
         portals=portals,
         default_org=default_org,
         cache_ttl_hours=float(cache_ttl_hours),
-        allow_secret_values=allow_secret_values,
         log_level=log_level,
         source_path=resolved,
+        performance=performance,
     )

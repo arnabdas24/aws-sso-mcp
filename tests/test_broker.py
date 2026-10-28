@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import boto3
+import pytest
 from botocore.stub import Stubber
 
 from aws_sso_mcp.sso.broker import CredentialBroker
@@ -18,7 +19,7 @@ def test_get_session_mints_and_caches(monkeypatch) -> None:
     broker = CredentialBroker()
     client = boto3.client("sso", region_name="us-east-1")
     stubber = Stubber(client)
-    expiration = _epoch_millis(datetime.now() + timedelta(hours=1))
+    expiration = _epoch_millis(datetime.now(UTC) + timedelta(hours=1))
     stubber.add_response(
         "get_role_credentials",
         {
@@ -32,7 +33,7 @@ def test_get_session_mints_and_caches(monkeypatch) -> None:
         {"accessToken": "tok", "roleName": "DevRole", "accountId": "111"},
     )
     stubber.activate()
-    monkeypatch.setattr("boto3.client", lambda service, region_name=None: client)
+    monkeypatch.setattr("aws_sso_mcp.sso.broker.build_client", lambda service, region, **_: client)
 
     session1 = broker.get_session(
         org="org1", region="us-east-1", account_id="111", role="DevRole", access_token="tok"
@@ -52,16 +53,14 @@ def test_get_session_error_wrapped(monkeypatch) -> None:
     stubber = Stubber(client)
     stubber.add_client_error("get_role_credentials", service_error_code="AccessDeniedException")
     stubber.activate()
-    monkeypatch.setattr("boto3.client", lambda service, region_name=None: client)
+    monkeypatch.setattr("aws_sso_mcp.sso.broker.build_client", lambda service, region, **_: client)
 
-    try:
+    with pytest.raises(AwsCallError) as excinfo:
         broker.get_session(
             org="org1", region="us-east-1", account_id="111", role="DevRole", access_token="tok"
         )
-        raise AssertionError("expected AwsCallError")
-    except AwsCallError as exc:
-        assert exc.service == "sso"
-        assert exc.operation == "GetRoleCredentials"
+    assert excinfo.value.service == "sso"
+    assert excinfo.value.operation == "GetRoleCredentials"
     stubber.deactivate()
 
 
@@ -69,7 +68,7 @@ def test_invalidate_forces_remint(monkeypatch) -> None:
     broker = CredentialBroker()
     client = boto3.client("sso", region_name="us-east-1")
     stubber = Stubber(client)
-    expiration = _epoch_millis(datetime.now() + timedelta(hours=1))
+    expiration = _epoch_millis(datetime.now(UTC) + timedelta(hours=1))
     for _ in range(2):
         stubber.add_response(
             "get_role_credentials",
@@ -84,7 +83,7 @@ def test_invalidate_forces_remint(monkeypatch) -> None:
             {"accessToken": "tok", "roleName": "DevRole", "accountId": "111"},
         )
     stubber.activate()
-    monkeypatch.setattr("boto3.client", lambda service, region_name=None: client)
+    monkeypatch.setattr("aws_sso_mcp.sso.broker.build_client", lambda service, region, **_: client)
 
     broker.get_session(
         org="org1", region="us-east-1", account_id="111", role="DevRole", access_token="tok"

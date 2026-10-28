@@ -14,7 +14,7 @@ from pathlib import Path
 from .cache.accounts import AccountCache
 from .config import Config, PortalConfig, default_state_dir
 from .engine.executor import QueryExecutor
-from .errors import OrgNotFoundError
+from .errors import McpError, OrgNotFoundError
 from .sso.broker import CredentialBroker
 
 
@@ -35,11 +35,17 @@ class AppState:
         state_dir = default_state_dir()
         cache_db = state_dir / "cache.db"
         cache = AccountCache(cache_db, ttl_hours=config.cache_ttl_hours)
+        perf = config.performance
         return cls(
             config=config,
             cache=cache,
             broker=CredentialBroker(),
-            executor=QueryExecutor(),
+            executor=QueryExecutor(
+                credential_workers=perf.credential_workers,
+                service_workers=perf.service_workers,
+                per_target_timeout_seconds=perf.per_target_timeout_seconds,
+                progress_min_interval_seconds=perf.progress_min_interval_seconds,
+            ),
             state_dir=state_dir,
             _active_org_lock=threading.Lock(),
             _active_org=config.default_org,
@@ -66,19 +72,24 @@ class AppState:
         return portal
 
     def resolve_org(self, org: str | None) -> PortalConfig:
-        """Resolve an explicit ``org=`` override, else fall back to the active org."""
+        """Resolve an explicit ``org=`` override, falling back to the active org.
+
+        Args:
+            org: An explicit org alias, or ``None`` to use the active one.
+
+        Returns:
+            The matching portal configuration.
+
+        Raises:
+            OrgNotFoundError: If ``org`` names an org that is not configured.
+            McpError: If ``org`` is ``None`` and no active org is set.
+        """
         if org is not None:
             return self.require_portal(org)
         active = self.get_active_org()
         if active is None:
-            raise _no_active_org_error(self.config)
+            raise McpError(
+                "No active org and none specified. Call use_org(org) first, or pass org= "
+                f"explicitly. Configured orgs: {sorted(self.config.portals)}"
+            )
         return self.require_portal(active)
-
-
-def _no_active_org_error(config: Config) -> Exception:
-    from .errors import McpError
-
-    return McpError(
-        "No active org and none specified. Call use_org(org) first, or pass org= explicitly. "
-        f"Configured orgs: {sorted(config.portals)}"
-    )

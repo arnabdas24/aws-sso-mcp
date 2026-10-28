@@ -8,12 +8,16 @@ from __future__ import annotations
 
 import threading
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
+from ..awscfg import build_client
 from ..errors import AwsCallError
+from ..logging_setup import get_logger
+
+logger = get_logger(__name__)
 
 # Refresh this many seconds before actual expiry, so a long-running multi-step
 # query never has credentials expire mid-flight.
@@ -37,6 +41,8 @@ class CredentialBroker:
     def __init__(self) -> None:
         self._cache: dict[tuple[str, str, str], _CachedSession] = {}
         self._lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
 
     def get_session(
         self, *, org: str, region: str, account_id: str, role: str, access_token: str
@@ -48,12 +54,16 @@ class CredentialBroker:
                 no longer granted).
         """
         key = (org, account_id, role)
+        now = datetime.now(UTC)
         with self._lock:
             cached = self._cache.get(key)
-            if cached is not None and cached.expires_at > datetime.now():
+            if cached is not None and cached.expires_at > now:
+                self.hits += 1
                 return cached.session
+            self.misses += 1
 
-        client = boto3.client("sso", region_name=region)
+        client = build_client("sso", region=region)
+        logger.debug("sso:GetRoleCredentials org=%s account=%s role=%s", org, account_id, role)
         try:
             response = client.get_role_credentials(
                 accessToken=access_token, roleName=role, accountId=account_id
@@ -81,8 +91,8 @@ class CredentialBroker:
             aws_secret_access_key=creds["secretAccessKey"],
             aws_session_token=creds["sessionToken"],
         )
-        # expiration is epoch millis
-        expires_at = datetime.fromtimestamp(creds["expiration"] / 1000.0) - timedelta(
+        # expiration is epoch millis (UTC)
+        expires_at = datetime.fromtimestamp(creds["expiration"] / 1000.0, tz=UTC) - timedelta(
             seconds=_REFRESH_MARGIN_SECONDS
         )
 
@@ -94,3 +104,12 @@ class CredentialBroker:
         """Drop a cached session, e.g. after an access-denied at call time."""
         with self._lock:
             self._cache.pop((org, account_id, role), None)
+
+    def stats(self) -> dict[str, int]:
+        """Return cheap counters for perf tooling - hits/misses/currently-cached."""
+        with self._lock:
+            return {
+                "hits": self.hits,
+                "misses": self.misses,
+                "cached_sessions": len(self._cache),
+            }
