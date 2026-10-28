@@ -1,0 +1,14 @@
+# Code ownership and required reviews.
+# See https://docs.github.com/articles/about-code-owners
+
+*                                   @arnabdas24
+
+# Credential path and its redaction/hardening - changes need owner review.
+/src/aws_sso_mcp/sso/               @arnabdas24
+/src/aws_sso_mcp/redact.py          @arnabdas24
+/src/aws_sso_mcp/hardening.py       @arnabdas24
+/src/aws_sso_mcp/config.py          @arnabdas24
+
+# CI/CD, release, and supply-chain surfaces.
+/.github/workflows/                 @arnabdas24
+/release-please-config.json         @arnabdas24

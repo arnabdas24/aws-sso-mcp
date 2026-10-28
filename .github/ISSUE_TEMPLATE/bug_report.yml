@@ -1,0 +1,44 @@
+name: 🐛 Bug report
+description: Something is broken or behaves unexpectedly
+labels: [bug, triage]
+body:
+  - type: checkboxes
+    id: preflight
+    attributes:
+      label: Preflight
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This report contains no secrets (keys, tokens, real account IDs)
+          required: true
+  - type: input
+    id: version
+    attributes:
+      label: Package version
+      description: "`pip show aws-sso-mcp | grep Version`"
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version and OS
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: MCP client
+      description: e.g. VS Code, Claude Desktop, Copilot CLI
+  - type: textarea
+    id: repro
+    attributes:
+      label: What did you ask / which tool was called?
+    validations:
+      required: true
+  - type: textarea
+    id: behavior
+    attributes:
+      label: Expected vs. actual behavior (redacted logs / errors)
+      render: text
+    validations:
+      required: true
