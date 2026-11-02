@@ -16,7 +16,7 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from aws_sso_mcp.hardening import process_output
-from aws_sso_mcp.redact import redact
+from aws_sso_mcp.redact import _BARE_PATTERNS, _KEY_VALUE_PATTERN, _PREFILTER, redact
 
 _KEY_BODY = st.text(alphabet=string.ascii_uppercase + string.digits, min_size=16, max_size=16)
 _ACCESS_KEYS = st.builds(
@@ -80,3 +80,36 @@ def test_a_secret_is_masked_at_any_nesting_depth(key: str, max_string: int, dept
     out = process_output(payload, max_string=max_string, do_redact=True)
 
     assert key not in json.dumps(out)
+
+
+_SECRET_PATTERNS = (*_BARE_PATTERNS, _KEY_VALUE_PATTERN)
+
+
+@_SETTINGS
+@given(data=st.data())
+def test_the_prefilter_admits_every_string_the_real_patterns_match(data: st.DataObject) -> None:
+    """The prefilter is a speed gate, so it must never veto a genuine match.
+
+    ``_PREFILTER`` restates, as plain literals, the prefixes embedded in the
+    real patterns - a deliberate duplication so the common no-secret string
+    costs one scan instead of four. The hazard is that adding a pattern without
+    adding its prefix silently disables that pattern for every caller, and no
+    example test would notice. Generating strings *from* each real pattern pins
+    the two lists together.
+    """
+    pattern = data.draw(st.sampled_from(_SECRET_PATTERNS))
+    sample = data.draw(st.from_regex(pattern))
+
+    assert _PREFILTER.search(sample) is not None
+
+
+@_SETTINGS
+@given(data=st.data())
+def test_every_bare_secret_shape_is_masked(data: st.DataObject) -> None:
+    """Extends the AKIA/ASIA case above to STS session tokens and JWTs."""
+    pattern = data.draw(st.sampled_from(_BARE_PATTERNS))
+    sample = data.draw(st.from_regex(pattern))
+    match = pattern.search(sample)
+
+    assert match is not None
+    assert match.group(0) not in redact(sample)
