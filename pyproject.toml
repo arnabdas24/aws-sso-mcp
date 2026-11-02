@@ -1,7 +1,7 @@
 [project]
 name = "aws-sso-mcp"
-version = "0.1.0rc3"
-description = "For anyone with more than one AWS account or org: an MCP server for IAM Identity Center that fans one question out across all of them, with rule-based role selection and no long-lived keys."
+version = "0.1.0rc4"
+description = "Query multiple AWS accounts across orgs at once from your AI chat client, via IAM Identity Center SSO. Rule-based role selection, no long-lived keys."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
