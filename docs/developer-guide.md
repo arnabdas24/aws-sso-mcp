@@ -336,14 +336,16 @@ Mark breaking changes with `!` (`feat!: ...`) or a `BREAKING CHANGE:` footer.
 Automated by release-please ([release-please-config.json](../release-please-config.json)):
 
 1. Merging conventional commits to the default branch opens or updates a release PR that bumps the version
-   (`__init__.py`, `uv.lock`) and `CHANGELOG.md`.
+   (`pyproject.toml`, `uv.lock`) and `CHANGELOG.md`.
 2. Merging that PR tags the release; [release.yml](../.github/workflows/release.yml) builds and publishes
    to PyPI via Trusted Publishing, with a build-provenance attestation and a CycloneDX SBOM.
 3. Rehearse a publish manually against TestPyPI before a first release; see
    [CONTRIBUTING.md](../CONTRIBUTING.md).
 
-Do not edit the version by hand. The `# x-release-please-version` marker in `__init__.py` is how it is
-updated.
+Do not edit the version by hand for a real release. `pyproject.toml` is the only place the version is
+written; `aws_sso_mcp.__version__` reads it back from the installed package, so `--version` cannot drift.
+For a manual pre-release bump (`0.1.0rcN`) edit `version` in `pyproject.toml`, run `uv lock`, and commit
+both.
 
 ## Design invariants to protect
 

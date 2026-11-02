@@ -8,4 +8,12 @@ can perform (read or mutating) is dispatched.
 
 from __future__ import annotations
 
-__version__ = "0.1.0rc4"  # x-release-please-version
+from importlib.metadata import PackageNotFoundError, version
+
+# The single source of truth is ``version`` in pyproject.toml, read back from the
+# installed package so the two can never disagree. The fallback covers running from
+# a bare source tree that was never installed.
+try:
+    __version__ = version("aws-sso-mcp")
+except PackageNotFoundError:  # pragma: no cover - only without an install
+    __version__ = "0+unknown"

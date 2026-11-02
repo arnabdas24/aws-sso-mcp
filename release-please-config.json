@@ -9,10 +9,6 @@
       "include-component-in-tag": false,
       "extra-files": [
         {
-          "type": "generic",
-          "path": "src/aws_sso_mcp/__init__.py"
-        },
-        {
           "type": "toml",
           "path": "uv.lock",
           "jsonpath": "$.package[?(@.name=='aws-sso-mcp')].version"

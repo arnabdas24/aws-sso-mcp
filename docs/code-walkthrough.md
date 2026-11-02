@@ -249,7 +249,7 @@ server.explain_role_selection
 
 **Purpose:** package marker and the single source of the version string.
 
-**Key contents:** `__version__ = "0.1.0"  # x-release-please-version`.
+**Key contents:** `__version__`, read from the installed package metadata (so `pyproject.toml` is the single source of truth).
 
 **Called by:** `server.py` (`--version` flag), `pyproject.toml` (packaging), release-please (rewrites the
 marker line).

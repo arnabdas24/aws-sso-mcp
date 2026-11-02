@@ -125,4 +125,4 @@ jobs:
           python -m venv /tmp/smoke
           /tmp/smoke/bin/pip install dist/*.whl
           /tmp/smoke/bin/aws-sso-mcp --version
-          /tmp/smoke/bin/python -c "import aws_sso_mcp, importlib.metadata as m; assert m.version('aws-sso-mcp') == aws_sso_mcp.__version__"
+          /tmp/smoke/bin/python -c "import aws_sso_mcp, importlib.metadata as m; assert aws_sso_mcp.__version__ == m.version('aws-sso-mcp') != '0+unknown'"
