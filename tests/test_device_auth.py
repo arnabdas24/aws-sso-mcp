@@ -10,6 +10,7 @@ from pathlib import Path
 
 import boto3
 import pytest
+from botocore.exceptions import SSLError
 from botocore.stub import Stubber
 
 from aws_sso_mcp.config import PortalConfig
@@ -190,6 +191,28 @@ def test_login_times_out_when_user_never_approves(tmp_path: Path, monkeypatch) -
     assert excinfo.value.code == "LoginTimeout"
 
     stubber.deactivate()
+
+
+def test_login_tls_failure_explains_how_to_fix_it(tmp_path: Path, monkeypatch) -> None:
+    """A proxy-intercepted TLS handshake must name AWS_CA_BUNDLE, not just say "Login failed"."""
+
+    class _Failing:
+        def register_client(self, **_: object) -> dict[str, str]:
+            raise SSLError(
+                endpoint_url="https://oidc.us-east-1.amazonaws.com/client/register",
+                error="[SSL: CERTIFICATE_VERIFY_FAILED] unable to get local issuer certificate",
+            )
+
+    monkeypatch.setattr(device_auth, "_build_sso_oidc_client", lambda p: _Failing())
+
+    with pytest.raises(AwsCallError) as excinfo:
+        device_auth.login(tmp_path, _portal())
+
+    assert excinfo.value.code == "SSLError"
+    assert excinfo.value.is_access_denied is False
+    message = str(excinfo.value)
+    assert "AWS_CA_BUNDLE" in message
+    assert "proxy" in message
 
 
 def test_get_access_token_no_auto_login_raises(tmp_path: Path) -> None:

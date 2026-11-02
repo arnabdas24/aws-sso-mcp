@@ -87,6 +87,23 @@ _ACCESS_DENIED_CODES = frozenset(
 )
 
 
+# Transport-level failure codes that no amount of AWS permission will fix, mapped
+# to the one thing the user can actually act on. ``AwsCallError`` is constructed
+# with ``type(exc).__name__`` when botocore raises a connection error rather than
+# a service error, so these keys are botocore exception class names - which is why
+# this module still needs no botocore import.
+_CONNECTIVITY_HINTS = {
+    "SSLError": (
+        "TLS verification failed, so the certificate presented was not trusted. This is "
+        "usually a corporate proxy intercepting HTTPS. Point AWS_CA_BUNDLE at a PEM file "
+        "holding your proxy's root CA, set it in your MCP client's env block as an absolute "
+        'path, and restart the client. Verify the bundle first with: python -c "import '
+        "boto3; boto3.client('sso-oidc', region_name='us-east-1').register_client("
+        "clientName='t', clientType='public')\""
+    ),
+}
+
+
 class AwsCallError(McpError):
     """A clean-message wrapper around any AWS-side call failure.
 
@@ -101,6 +118,9 @@ class AwsCallError(McpError):
     """
 
     def __init__(self, service: str, operation: str, code: str, message: str) -> None:
+        hint = _CONNECTIVITY_HINTS.get(code)
+        if hint:
+            message = f"{message} {hint}"
         super().__init__(f"{service}:{operation} failed ({code}): {message}")
         self.service = service
         self.operation = operation

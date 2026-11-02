@@ -51,8 +51,46 @@ Ask your assistant, in order:
 | Browser did not open | Headless or restricted host | The URL and user code are logged; open the URL manually and enter the code |
 | `The device authorization code expired before the sign-in was approved` | You waited too long | Call `login` again and approve promptly |
 | `Timed out waiting for the SSO sign-in to be approved` | Same, deadline reached | Call `login` again |
+| `sso-oidc ... device_authorization failed (SSLError): ...` | A corporate proxy is intercepting HTTPS, so botocore does not trust the certificate | See [TLS interception behind a corporate proxy](#tls-interception-behind-a-corporate-proxy) |
 | `sso-oidc ... device_authorization failed (...): Login failed.` | Wrong `region` or `start_url`, or network | Verify the Identity Center region and URL in the console; check connectivity or proxy |
 | A query never opens a browser | **By design** | Run `login` explicitly |
+
+### TLS interception behind a corporate proxy
+
+Many corporate networks terminate HTTPS and re-sign it with an internal CA. Your OS trusts that
+CA, but botocore ships its own trust store and does not, so every AWS call fails with `SSLError`.
+
+Point `AWS_CA_BUNDLE` at a PEM file containing your proxy's **root** CA. Get that file from your IT
+team; an export containing only the intermediate will not work.
+
+Set it in your MCP client's `env` block, not in a shell. The client launches the server as a
+subprocess, so a variable exported in a terminal (or with `setx` after the client started) never
+reaches it:
+
+```json
+{
+  "mcpServers": {
+    "aws-sso-mcp": {
+      "command": "aws-sso-mcp",
+      "env": { "AWS_CA_BUNDLE": "C:\\Users\\you\\certs\\corp-root.pem" }
+    }
+  }
+}
+```
+
+Use an absolute path, double the backslashes on Windows, and restart the client fully.
+
+Check the bundle itself before blaming the server:
+
+```bash
+python -c "import boto3; boto3.client('sso-oidc', region_name='us-east-1').register_client(clientName='t', clientType='public')"
+```
+
+If that command fails too, the bundle is wrong. If it succeeds but the server still fails, the
+variable is not reaching the server process - re-check the `env` block.
+
+The same variable fixes `uv`/`pip` installs, which use `--system-certs` (older versions:
+`--native-tls`) or `SSL_CERT_FILE` instead.
 
 ## Account selection
 
