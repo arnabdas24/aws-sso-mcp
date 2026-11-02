@@ -104,7 +104,7 @@ wheels = [
 
 [[package]]
 name = "aws-sso-mcp"
-version = "0.1.0rc2"
+version = "0.1.0rc3"
 source = { editable = "." }
 dependencies = [
     { name = "boto3" },
