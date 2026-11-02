@@ -12,6 +12,7 @@ this process, a fan-out doesn't re-read the file per account.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 import webbrowser
@@ -44,6 +45,24 @@ _SLOW_DOWN_BACKOFF_SECONDS = 5.0
 
 # How often to remind the user that we are still waiting for their approval.
 _WAIT_NOTICE_INTERVAL_SECONDS = 15.0
+
+# A token that is still technically valid but about to lapse is treated as
+# unusable. A wide fan-out can run for minutes, and AWS rejects the token the
+# instant it expires, so handing out a nearly-dead token turns a clean
+# "please log in" into a partial failure somewhere in the middle of a run.
+_EXPIRY_MARGIN = timedelta(minutes=5)
+
+
+def _is_usable(expires_at: datetime, now: datetime) -> bool:
+    """Return whether a token outlasts the safety margin, not merely ``now``."""
+    return expires_at > now + _EXPIRY_MARGIN
+
+
+def _unusable_reason(expires_at: datetime, now: datetime) -> str:
+    """Explain why a token was rejected, distinguishing lapsed from about-to-lapse."""
+    if expires_at <= now:
+        return "expired"
+    return f"expiring within {int(_EXPIRY_MARGIN.total_seconds() // 60)} minutes"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,7 +120,12 @@ def _parse_expiry(raw: str) -> datetime:
 
 
 def _write_cached_token(path: Path, access_token: str, expires_at: datetime) -> None:
-    """Write the token cache file, restricted to the current user where possible.
+    """Atomically write the token cache file, restricted to the current user.
+
+    The payload is written to a private temporary file in the same directory and
+    then renamed over the target. A concurrent reader - including the
+    cross-process fall-through in :func:`token_status` - therefore sees either
+    the complete old file or the complete new one, never a truncated one.
 
     On POSIX this yields mode 0600. Windows ignores POSIX permission bits, so the
     file instead relies on the state directory's inherited ACL; that is the same
@@ -112,7 +136,23 @@ def _write_cached_token(path: Path, access_token: str, expires_at: datetime) -> 
         "access_token": access_token,
         "expires_at": expires_at.strftime(_TIME_FORMAT),
     }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    # The pid in the temp name keeps two processes refreshing the same org from
+    # truncating each other's half-written file before either one renames.
+    tmp_path = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    # Create with 0600 from the start so the secret is never briefly readable
+    # under the default umask. os.replace then carries that mode onto the target.
+    fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(payload, indent=2))
+            # fsync before the rename: without it a crash can leave the renamed
+            # file present but empty, which would look like a corrupted cache.
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    finally:
+        # No-op on the success path, where the rename already consumed it.
+        tmp_path.unlink(missing_ok=True)
     path.chmod(0o600)  # owner read/write only - it grants the user's own SSO access
 
 
@@ -147,14 +187,12 @@ def token_status(state_dir: Path, org: str) -> TokenStatus:
     """
     now = datetime.now(UTC)
     mem = _get_mem(org)
-    if mem is not None:
-        valid = mem.expires_at > now
+    if mem is not None and _is_usable(mem.expires_at, now):
         return TokenStatus(
-            org=org,
-            valid=valid,
-            expires_at=mem.expires_at.strftime(_TIME_FORMAT),
-            reason=None if valid else "expired",
+            org=org, valid=True, expires_at=mem.expires_at.strftime(_TIME_FORMAT), reason=None
         )
+    # An expired in-memory entry falls through to disk: another process may
+    # have refreshed the file since this one cached the old token.
 
     data = _read_cached_token(token_cache_path(state_dir, org))
     if data is None:
@@ -165,14 +203,14 @@ def token_status(state_dir: Path, org: str) -> TokenStatus:
     except (KeyError, TypeError, ValueError):
         return TokenStatus(org=org, valid=False, expires_at=None, reason="cached token corrupted")
 
-    valid = expires_at > now
+    valid = _is_usable(expires_at, now)
     if valid:
         _put_mem(org, access_token, expires_at)
     return TokenStatus(
         org=org,
         valid=valid,
         expires_at=expires_at.strftime(_TIME_FORMAT),
-        reason=None if valid else "expired",
+        reason=None if valid else _unusable_reason(expires_at, now),
     )
 
 
@@ -349,7 +387,7 @@ def get_access_token(state_dir: Path, portal: PortalConfig, *, auto_login: bool 
         NoTokenError: If no valid token is cached and ``auto_login`` is ``False``.
     """
     mem = _get_mem(portal.name)
-    if mem is not None and mem.expires_at > datetime.now(UTC):
+    if mem is not None and _is_usable(mem.expires_at, datetime.now(UTC)):
         return mem.access_token
 
     status = token_status(state_dir, portal.name)

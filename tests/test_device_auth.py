@@ -51,6 +51,18 @@ def test_token_status_expired(tmp_path: Path) -> None:
     assert status.reason == "expired"
 
 
+def test_token_status_expired_memory_falls_back_to_fresher_disk_token(tmp_path: Path) -> None:
+    stale = datetime.now(UTC) - timedelta(minutes=1)
+    device_auth._put_mem("org1", "old", stale)
+    path = device_auth.token_cache_path(tmp_path, "org1")
+    path.parent.mkdir(parents=True)
+    future = (datetime.now(UTC) + timedelta(hours=1)).strftime(device_auth._TIME_FORMAT)
+    path.write_text(json.dumps({"access_token": "new", "expires_at": future}), encoding="utf-8")
+
+    assert device_auth.token_status(tmp_path, "org1").valid is True
+    assert device_auth.get_access_token(tmp_path, _portal(), auto_login=False) == "new"
+
+
 def test_token_status_corrupted_cache(tmp_path: Path) -> None:
     path = device_auth.token_cache_path(tmp_path, "org1")
     path.parent.mkdir(parents=True)
@@ -150,3 +162,60 @@ def test_get_access_token_no_auto_login_raises(tmp_path: Path) -> None:
         raise AssertionError("expected NoTokenError")
     except NoTokenError:
         pass
+
+
+# ------------------------------------------------ expiry margin / atomic write
+
+
+def test_token_expiring_within_the_margin_is_not_usable(tmp_path: Path) -> None:
+    """A technically-valid token that would lapse mid-fan-out is refused up front."""
+    path = device_auth.token_cache_path(tmp_path, "org1")
+    path.parent.mkdir(parents=True)
+    soon = (datetime.now(UTC) + timedelta(minutes=2)).strftime(device_auth._TIME_FORMAT)
+    path.write_text(json.dumps({"access_token": "tok", "expires_at": soon}), encoding="utf-8")
+
+    status = device_auth.token_status(tmp_path, "org1")
+
+    assert status.valid is False
+    assert status.reason == "expiring within 5 minutes"
+    with pytest.raises(NoTokenError):
+        device_auth.get_access_token(tmp_path, _portal(), auto_login=False)
+
+
+def test_token_beyond_the_margin_is_usable(tmp_path: Path) -> None:
+    path = device_auth.token_cache_path(tmp_path, "org1")
+    path.parent.mkdir(parents=True)
+    later = (datetime.now(UTC) + timedelta(minutes=30)).strftime(device_auth._TIME_FORMAT)
+    path.write_text(json.dumps({"access_token": "tok", "expires_at": later}), encoding="utf-8")
+
+    assert device_auth.token_status(tmp_path, "org1").valid is True
+    assert device_auth.get_access_token(tmp_path, _portal(), auto_login=False) == "tok"
+
+
+def test_write_cached_token_overwrites_and_leaves_no_temp_file(tmp_path: Path) -> None:
+    path = device_auth.token_cache_path(tmp_path, "org1")
+    expires = datetime.now(UTC) + timedelta(hours=1)
+
+    device_auth._write_cached_token(path, "tok-1", expires)
+    device_auth._write_cached_token(path, "tok-2", expires)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["access_token"] == "tok-2"
+    assert list(path.parent.glob("*.tmp")) == []
+
+
+def test_failed_token_write_leaves_the_previous_file_intact(tmp_path: Path, monkeypatch) -> None:
+    """The point of the temp-file + rename: a failed write never destroys a good token."""
+    path = device_auth.token_cache_path(tmp_path, "org1")
+    expires = datetime.now(UTC) + timedelta(hours=1)
+    device_auth._write_cached_token(path, "good", expires)
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(device_auth.os, "replace", explode)
+
+    with pytest.raises(OSError, match="no space left on device"):
+        device_auth._write_cached_token(path, "clobbered", expires)
+
+    assert json.loads(path.read_text(encoding="utf-8"))["access_token"] == "good"
+    assert list(path.parent.glob("*.tmp")) == []
