@@ -1,0 +1,15 @@
+title = "aws-sso-mcp gitleaks config"
+
+[extend]
+useDefault = true
+
+# The redaction tests need credentials in the real AWS format so the patterns they
+# exercise are the patterns that ship. These two values are synthetic (A-P filler,
+# no key behind them). Allowlisting the exact strings, not the tests/ directory,
+# means a genuine key committed to a test is still caught.
+[[allowlists]]
+description = "Synthetic AWS key ids used as redaction fixtures"
+regexes = [
+  '''AKIAABCDEFGHIJKLMNOP''',
+  '''ASIAABCDEFGHIJKLMNOP''',
+]
