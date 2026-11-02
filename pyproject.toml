@@ -118,3 +118,31 @@ filterwarnings = ["error"]
 [tool.vulture]
 paths = ["src", "vulture_whitelist.py"]
 min_confidence = 60
+
+# Mutation testing, run weekly by .github/workflows/mutation.yml.
+# Scoped to the security-critical modules: mutating the whole package would take
+# hours and most surviving mutants elsewhere are not worth a human's time.
+# Linux only - mutmut imports the Unix-only `resource` module.
+[tool.mutmut]
+paths_to_mutate = [
+    "src/aws_sso_mcp/redact.py",
+    "src/aws_sso_mcp/hardening.py",
+    "src/aws_sso_mcp/roles.py",
+    "src/aws_sso_mcp/errors.py",
+    "src/aws_sso_mcp/cache/accounts.py",
+    "src/aws_sso_mcp/sso/device_auth.py",
+]
+tests_dir = "tests/"
+
+[tool.uv.workspace]
+members = [
+    ".",
+]
+
+[tool.uv.sources]
+aws-sso-mcp = { workspace = true, editable = true }
+
+[dependency-groups]
+dev = [
+    "aws-sso-mcp",
+]

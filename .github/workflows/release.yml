@@ -6,6 +6,10 @@ name: Release
 #   2. When that release PR is merged, release-please creates a GitHub Release
 #      and tag. This workflow then builds the wheel + sdist and publishes them
 #      to PyPI via Trusted Publishing (OIDC) -- no stored API token.
+#   3. Each published artifact gets a signed SLSA build-provenance attestation
+#      and a CycloneDX SBOM, so consumers can verify *what* was built, *from
+#      which commit*, and *by which workflow*:
+#          gh attestation verify <file> --repo arnabdas24/aws-sso-mcp
 #
 # SECURITY RULE: publishing is deterministic tooling only. No long-lived
 # credentials are stored; PyPI auth uses short-lived OIDC tokens minted by the
@@ -51,7 +55,8 @@ jobs:
       url: https://pypi.org/p/aws-sso-mcp
     permissions:
       contents: write # attach built artifacts to the GitHub Release
-      id-token: write # OIDC token for PyPI Trusted Publishing
+      id-token: write # OIDC token for PyPI Trusted Publishing and attestations
+      attestations: write # record the build-provenance attestation
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -70,11 +75,27 @@ jobs:
           python -m build
           twine check dist/*
 
+      # Provenance is attested *before* publishing, so the bytes that go to
+      # PyPI are exactly the bytes covered by the signed attestation.
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
+
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: sbom.cyclonedx.json
+          upload-artifact: false
+          upload-release-assets: false
+
       - name: Publish to PyPI (Trusted Publishing / OIDC)
         uses: pypa/gh-action-pypi-publish@a892a5a61159132606e93a2fa6f4358831b04d26 # v1.14.2
 
-      - name: Attach artifacts to the GitHub Release
+      - name: Attach artifacts and SBOM to the GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_NAME: ${{ needs.release-please.outputs.tag_name }}
-        run: gh release upload "$TAG_NAME" dist/* --clobber
+        run: gh release upload "$TAG_NAME" dist/* sbom.cyclonedx.json --clobber

@@ -54,8 +54,18 @@ jobs:
       - name: Dead-code check (vulture)
         run: uv run --no-sync vulture
 
+      # A renamed file or reworded heading breaks a link silently; the
+      # reader finds out, not the author.
+      - name: Documentation links
+        run: uv run --no-sync python scripts/check_doc_links.py
+
       - name: pytest (coverage gate >= 85%, random order)
-        run: uv run --no-sync pytest
+        run: uv run --no-sync pytest --cov-report=json:coverage.json
+
+      # The global 85% gate lets a well-tested module subsidise a neglected
+      # one. These floors pin the modules where a gap is a security risk.
+      - name: Per-module coverage floors
+        run: uv run --no-sync python scripts/check_coverage_floors.py coverage.json
 
   # Proves the declared dependency *floors* are real: a user resolving to the
   # oldest allowed boto3/mcp must still get a working server.

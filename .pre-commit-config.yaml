@@ -35,6 +35,13 @@ repos:
         pass_filenames: false
         require_serial: true
 
+      - id: doc-links
+        name: documentation links and anchors
+        entry: python scripts/check_doc_links.py
+        language: system
+        files: \.md$
+        pass_filenames: false
+
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
     rev: v9.20.0
     hooks:
