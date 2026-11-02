@@ -12,6 +12,7 @@ precisely you state **what**, **where** (region) and **which accounts**, the bet
 - [Finding accounts and roles](#finding-accounts-and-roles)
 - [Querying prompts (by service)](#querying-prompts-by-service)
 - [Choosing accounts precisely](#choosing-accounts-precisely)
+- [Querying across several orgs](#querying-across-several-orgs)
 - [Multi-step prompts](#multi-step-prompts)
 - [Follow-up and refinement prompts](#follow-up-and-refinement-prompts)
 - [Operational and diagnostic prompts](#operational-and-diagnostic-prompts)
@@ -126,6 +127,27 @@ touching any real resources.
 | Allow a very wide run | `...across all 340 accounts; I confirm raising the account cap` |
 
 **Default scope:** with no org given, only the **active org** is used. It never silently widens to all orgs.
+
+## Querying across several orgs
+
+Each org is a separate IAM Identity Center instance with its own login, so a cross-org query is always an
+**explicit opt-in**. Name the orgs and the query fans out across both:
+
+- `Across corp and sandbox, list every running RDS instance in eu-west-1.`
+- `In org1 and org2, show S3 buckets in every prod account.`
+- `Search all orgs for accounts named like "logging".` (directory search, no AWS call)
+
+Before you do:
+
+1. **Log in to every org first.** `Log in to corp.` then `Log in to sandbox.` A missing session shows up as
+   a per-account error, not a failed query.
+2. **Use ids, not names, for look-alike accounts.** An exact account name must be unambiguous across every
+   org in scope; if both orgs have a `logging` account, give the 12-digit ids instead.
+3. **Roles are resolved per org.** Each org's own `[environments]` rules apply, so one query can assume
+   `ReadOnlyAccess` in one org and `SecurityAudit` in another. Ask `Which role would you use for
+   <account>?` if you are unsure.
+
+Worked tool calls for all of this are in [examples.md](examples.md#7-across-several-orgs).
 
 ## Multi-step prompts
 

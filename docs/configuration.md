@@ -171,4 +171,4 @@ per_target_timeout_seconds = 90
 ### Using a separate config per project
 
 Set `AWS_SSO_MCP_CONFIG` and `AWS_SSO_MCP_STATE_DIR` in the client's `env` block (see
-[examples/README.md](../examples/README.md#4-register-with-an-mcp-client)).
+[setup-guide.md](setup-guide.md#3-register-it-with-your-chat-client)).

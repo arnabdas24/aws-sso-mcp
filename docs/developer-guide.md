@@ -67,7 +67,7 @@ To try it from VS Code, add a workspace `.vscode/mcp.json`:
 Use a **separate state dir** while developing so you do not disturb your real tokens and cache.
 
 For protocol-level debugging without a chat client, use the Python smoke test in
-[examples/README.md](../examples/README.md#7-verify-it-end-to-end-without-a-full-client-optional).
+[examples/README.md](../examples/README.md#protocol-smoke-test).
 
 ## Daily workflow
 
@@ -337,8 +337,10 @@ Automated by release-please ([release-please-config.json](../release-please-conf
 
 1. Merging conventional commits to the default branch opens or updates a release PR that bumps the version
    (`__init__.py`, `uv.lock`) and `CHANGELOG.md`.
-2. Merging that PR tags the release; [release.yml](../.github/workflows/release.yml) builds and publishes.
-3. [testpypi.yml](../.github/workflows/testpypi.yml) supports rehearsing a publish.
+2. Merging that PR tags the release; [release.yml](../.github/workflows/release.yml) builds and publishes
+   to PyPI via Trusted Publishing, with a build-provenance attestation and a CycloneDX SBOM.
+3. Rehearse a publish manually against TestPyPI before a first release; see
+   [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 Do not edit the version by hand. The `# x-release-please-version` marker in `__init__.py` is how it is
 updated.

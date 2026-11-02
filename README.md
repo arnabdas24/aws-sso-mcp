@@ -75,7 +75,7 @@ You need Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
 **1. Install**
 
 ```bash
-uv tool install git+https://github.com/arnabdas24/aws-sso-mcp.git
+uv tool install aws-sso-mcp     # or: pipx install aws-sso-mcp
 aws-sso-mcp --version
 ```
 
@@ -113,7 +113,8 @@ On Windows, use `%USERPROFILE%\.config\aws-sso-mcp\config.toml`, or point `AWS_S
 }
 ```
 
-Other clients and options are covered in [examples/README.md](examples/README.md).
+Claude Desktop, Claude Code, Cursor, Windsurf and non-default config paths are all covered in
+[docs/setup-guide.md](docs/setup-guide.md).
 
 **4. Chat**
 
@@ -124,6 +125,7 @@ In Agent mode, try:
 3. `List stopped EC2 instances in us-east-1 across every prod account.`
 
 More ready-made phrasings, plus mistakes to avoid, are in [docs/prompt-guide.md](docs/prompt-guide.md).
+To see the exact tool call behind each sentence, read [docs/examples.md](docs/examples.md).
 
 ## Safety model
 

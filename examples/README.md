@@ -1,251 +1,22 @@
-# Running aws-sso-mcp
+# Example files
 
-This folder contains a working example configuration and step-by-step
-instructions for running the server locally and wiring it into an MCP
-client.
+Working configuration you can copy, plus an end-to-end protocol smoke test.
 
-## 1. Install it
+| File | What it is |
+|---|---|
+| [config.example.toml](config.example.toml) | Annotated two-org configuration. Copy it to `~/.config/aws-sso-mcp/config.toml` and edit. |
 
-There are two ways to get the `aws-sso-mcp` command:
+**Installing the server and connecting it to a chat client is covered in
+[docs/setup-guide.md](../docs/setup-guide.md)** - VS Code Copilot, Claude Desktop, Claude Code,
+Cursor, Windsurf, config and state locations, and the first login.
 
-**Option A - install it globally (recommended for actual use):** once
-this repo is pushed to GitHub, anyone can install it directly with
-`uv tool install` (or `pipx`) - no repo checkout, no `cwd`, works from
-any directory afterward:
+Every key in the config file is documented in
+[docs/configuration.md](../docs/configuration.md).
 
-```bash
-uv tool install git+https://github.com/<owner>/aws-sso-mcp.git@<branch>
-```
+## Protocol smoke test
 
-This puts a standalone `aws-sso-mcp` executable on your `PATH`
-(`~/.local/bin/aws-sso-mcp` by default). Verify it:
-
-```bash
-which aws-sso-mcp
-```
-
-To install from a local checkout instead of git (e.g. while developing):
-
-```bash
-cd /path/to/aws-sso-mcp
-uv tool install --editable .
-```
-
-`--editable` means local code edits take effect immediately without
-reinstalling.
-
-**Option B - run it from a repo checkout without installing:** useful
-for quick local testing.
-
-```bash
-cd /path/to/aws-sso-mcp
-uv sync
-uv run aws-sso-mcp
-```
-
-The rest of this guide shows both forms side by side.
-
-## 2. Create your config
-
-Copy the example and edit it with your real org(s):
-
-```bash
-mkdir -p ~/.config/aws-sso-mcp
-cp examples/config.example.toml ~/.config/aws-sso-mcp/config.toml
-```
-
-Open `~/.config/aws-sso-mcp/config.toml` and fill in, per org:
-
-* `start_url` - your IAM Identity Center (SSO) start URL
-* `region` - the region hosting that org's SSO/SSO-OIDC endpoint (not a
-  default query region - every AWS call always requires its own
-  `region=`)
-* `[portals.<org>.environments.<env>]` tables - name-pattern -> role
-  rules used to deterministically pick which IAM role is assumed per
-  account (the model never chooses a role itself)
-
-See the comments in `config.example.toml` for the full shape, including
-a two-org example.
-
-The config file resolution order is:
-
-1. An explicit path passed programmatically (mainly for tests)
-2. `$AWS_SSO_MCP_CONFIG`
-3. `~/.config/aws-sso-mcp/config.toml` (default)
-
-Cache/token state (never secrets in the config itself) lives under
-`~/.aws_sso/mcp/` by default, overridable with `$AWS_SSO_MCP_STATE_DIR`.
-
-## 3. Run it standalone (sanity check)
-
-```bash
-aws-sso-mcp              # if installed globally (Option A)
-# or
-uv run aws-sso-mcp       # if running from a repo checkout (Option B)
-```
-
-This starts the server on **stdio** and blocks, waiting for an MCP
-client to connect - `Ctrl+C` to stop. This step just proves the config
-loads and the binary starts; a real client is needed to call tools.
-
-## 4. Register with an MCP client
-
-**If you're using VS Code, skip this step and go straight to step 5** -
-VS Code uses a different config file/format from the generic
-`mcpServers` example below.
-
-The snippet below is the format used by **Claude Desktop** and several
-other MCP clients (key name `mcpServers`). For Claude Desktop
-specifically, this JSON goes in:
-
-* macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
-* Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-* Linux (community builds): `~/.config/Claude/claude_desktop_config.json`
-
-If installed globally (Option A), point your client straight at the
-`aws-sso-mcp` executable - no `cwd` needed:
-
-```json
-{
-  "mcpServers": {
-    "aws-sso-mcp": {
-      "command": "aws-sso-mcp"
-    }
-  }
-}
-```
-
-If running from a repo checkout instead (Option B):
-
-```json
-{
-  "mcpServers": {
-    "aws-sso-mcp": {
-      "command": "uv",
-      "args": ["run", "aws-sso-mcp"],
-      "cwd": "/absolute/path/to/aws-sso-mcp"
-    }
-  }
-}
-```
-
-If you want to point at a non-default config/state location instead of
-`~/.config/aws-sso-mcp/config.toml`, add an `env` block (works with
-either option):
-
-```json
-{
-  "mcpServers": {
-    "aws-sso-mcp": {
-      "command": "aws-sso-mcp",
-      "env": {
-        "AWS_SSO_MCP_CONFIG": "/absolute/path/to/config.toml",
-        "AWS_SSO_MCP_STATE_DIR": "/absolute/path/to/state-dir"
-      }
-    }
-  }
-}
-```
-
-## 5. Using it in VS Code (GitHub Copilot Chat)
-
-VS Code's MCP support uses a `servers` key (not `mcpServers`) and can be
-scoped per-workspace or per-user.
-
-**User-scoped, installed globally (recommended - works in every
-workspace):** run **Command Palette -> "MCP: Open User Configuration"**
-and add:
-
-```json
-{
-  "servers": {
-    "aws-sso-mcp": {
-      "type": "stdio",
-      "command": "aws-sso-mcp"
-    }
-  }
-}
-```
-
-Or run **Command Palette -> "MCP: Add Server..."**, choose
-"Command (stdio)", and enter `aws-sso-mcp` as the command.
-
-**Workspace-scoped, from a repo checkout:** create `.vscode/mcp.json` in
-the project you want to query AWS from:
-
-```json
-{
-  "servers": {
-    "aws-sso-mcp": {
-      "type": "stdio",
-      "command": "uv",
-      "args": ["run", "aws-sso-mcp"],
-      "cwd": "/absolute/path/to/aws-sso-mcp"
-    }
-  }
-}
-```
-
-If your config/state live somewhere other than the defaults, add an
-`env` block (works with either form above):
-
-```json
-{
-  "servers": {
-    "aws-sso-mcp": {
-      "type": "stdio",
-      "command": "aws-sso-mcp",
-      "env": {
-        "AWS_SSO_MCP_CONFIG": "/absolute/path/to/config.toml",
-        "AWS_SSO_MCP_STATE_DIR": "/absolute/path/to/state-dir"
-      }
-    }
-  }
-}
-```
-
-After saving `mcp.json`, VS Code shows an inline **Start** action above
-the `aws-sso-mcp` entry - click it (or reload the window) to launch the
-server. Once running:
-
-* Open the Copilot Chat panel and switch to **Agent mode** (tools are
-  only available in Agent mode, not Ask/Edit mode).
-* Click the **tools icon** in the chat input to confirm `aws-sso-mcp`'s
-  tools (`aws_query`, `run_dag`, `login`, `use_org`, ...) are listed and
-  enabled.
-* Chat naturally, e.g. *"login to org1"* then *"list stopped EC2
-  instances across every prod account"* - Copilot will call the tools
-  for you and prompt for confirmation before each tool run (VS Code asks
-  per-tool/per-session approval by default).
-* Use **Command Palette -> "MCP: Show Output"** / the "Show Output"
-  action on the server entry to view server logs if something looks
-  wrong (e.g. a config error surfaces there immediately on start).
-
-## 6. First use, in chat
-
-1. `login to org1` (or whichever alias you used) - opens a browser for
-   SSO device authorization once; the token is cached until it expires.
-2. `what orgs are configured`, `switch to org2`, `is my token still valid`
-   - session/org management.
-3. `find accounts with -prod in the name`, `list my roles on account
-   123456789012` - account/role lookups (auto-refreshes the cached
-   account directory on a 12h threshold, or force it with
-   `refresh_accounts`).
-4. Natural-language AWS questions, e.g. *"list all stopped EC2 instances
-   across every prod account in org1"* - the model translates this into
-   the generic `aws_query` tool call; account/role selection is always
-   deterministic, never chosen by the model itself. Multi-step questions
-   use `run_dag` to chain calls per account.
-
-Any AWS operation the assumed role is permitted to perform - read *or*
-mutating - is dispatched, with AWS IAM as the sole authorization boundary.
-Nothing is refused locally: if the role lacks permission, AWS returns
-AccessDenied and that error is surfaced as-is. Every call is recorded in the
-append-only audit log (mutating calls are flagged with `"write": true`).
-
-## 7. Verify it end-to-end without a full client (optional)
-
-A minimal Python MCP client smoke test, useful when debugging:
+Useful when a chat client reports a failure with no detail. This talks MCP to the server directly,
+with no client involved, and prints the tool list plus the result of one call:
 
 ```bash
 uv run python - <<'PY'
@@ -268,3 +39,6 @@ async def main():
 asyncio.run(main())
 PY
 ```
+
+If that prints a tool list, the server and your config are fine and the problem is in the client
+registration - go back to [docs/setup-guide.md](../docs/setup-guide.md#3-register-it-with-your-chat-client).
