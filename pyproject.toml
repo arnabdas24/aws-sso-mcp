@@ -1,7 +1,8 @@
 [project]
 name = "aws-sso-mcp"
-version = "0.1.0"
+version = "0.1.0rc1"
 description = "MCP server for AWS IAM Identity Center (SSO): multi-org, multi-account AWS querying and management from a chat client."
+readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 authors = [
