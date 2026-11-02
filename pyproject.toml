@@ -30,6 +30,8 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    # anyio < 4.16 imports a pytest name that pytest 9.2 deprecated, and filterwarnings=error makes that fatal.
+    "anyio>=4.16",
     "pytest-cov>=5.0",
     "pytest-randomly>=3.15",
     "hypothesis>=6.100",
