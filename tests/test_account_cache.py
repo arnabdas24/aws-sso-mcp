@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 import time
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from aws_sso_mcp.cache.accounts import AccountCache, SyncState
@@ -168,6 +169,25 @@ def test_invalidate_role_forces_refetch(tmp_path: Path, monkeypatch) -> None:
     assert calls["n"] == 2
 
 
+def test_directory_refresh_discards_cached_roles(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path)
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [SsoAccount(account_id="111", account_name="acct-a")],
+    )
+    calls = {"n": 0}
+
+    def fake_roles(region, token, account_id):
+        calls["n"] += 1
+        return ["DevRole"]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_account_roles", fake_roles)
+    cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok", force=True)
+    cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+    assert calls["n"] == 2
+
+
 # ---------------------------------------------------------- schema versioning
 
 
@@ -264,3 +284,58 @@ def test_state_is_stale_reuses_an_already_read_row(tmp_path: Path, monkeypatch) 
     state = cache.sync_state("org1")
     assert cache.state_is_stale(state) is False
     assert cache.state_is_stale(SyncState(org="org1", last_full_sync=None, account_count=0)) is True
+
+
+# ------------------------------------------- refresh / role-fetch interleaving
+
+
+def test_roles_fetched_across_a_refresh_are_not_cached(tmp_path: Path, monkeypatch) -> None:
+    """A role fetch straddling a refresh must not repopulate the cleared slate.
+
+    Without the generation guard the in-flight fetch writes pre-refresh grants
+    back after ensure_fresh deleted them, so a revoked role stays usable for a
+    whole TTL window - the exact bug the refresh-time delete exists to prevent.
+    """
+    cache = _make_cache(tmp_path)
+    clock = {"t": datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)}
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts._now_utc", lambda: clock["t"])
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_accounts",
+        lambda region, token: [SsoAccount(account_id="111", account_name="acct-a")],
+    )
+    cache.ensure_fresh("org1", region="us-east-1", access_token_getter=lambda: "tok")
+
+    calls = {"n": 0}
+
+    def fake_roles(region, token, account_id):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            # A directory refresh lands while this fetch is still in flight.
+            clock["t"] += timedelta(minutes=1)
+            cache.ensure_fresh(
+                "org1", region="us-east-1", access_token_getter=lambda: "tok", force=True
+            )
+        return ["DevRole"]
+
+    monkeypatch.setattr("aws_sso_mcp.cache.accounts.list_account_roles", fake_roles)
+
+    # The straddling call still returns what it fetched; it just must not cache it.
+    assert cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok") == [
+        "DevRole"
+    ]
+    cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+
+    assert calls["n"] == 2
+    assert cache.stats() == {"role_hits": 0, "role_misses": 2}
+
+
+def test_stats_reports_hits_and_misses(tmp_path: Path, monkeypatch) -> None:
+    cache = _make_cache(tmp_path)
+    monkeypatch.setattr(
+        "aws_sso_mcp.cache.accounts.list_account_roles",
+        lambda region, token, account_id: ["DevRole"],
+    )
+    cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+    cache.roles_for_account("org1", "111", region="us-east-1", access_token="tok")
+
+    assert cache.stats() == {"role_hits": 1, "role_misses": 1}

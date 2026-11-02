@@ -40,6 +40,17 @@ def _parse_stamp(raw: str) -> datetime:
     return datetime.strptime(raw, _TIME_FORMAT).replace(tzinfo=UTC)
 
 
+def _read_generation(conn: sqlite3.Connection, org: str) -> str | None:
+    """Return the org's ``last_full_sync`` stamp, which identifies a directory generation.
+
+    Any :meth:`AccountCache.ensure_fresh` refresh rewrites this stamp and wipes the
+    org's cached role grants, so a change here means previously fetched grants
+    belong to a superseded generation.
+    """
+    row = conn.execute("SELECT last_full_sync FROM sync_state WHERE org = ?", (org,)).fetchone()
+    return None if row is None else str(row["last_full_sync"])
+
+
 @dataclass(frozen=True, slots=True)
 class SyncState:
     org: str
@@ -59,8 +70,11 @@ class AccountCache:
         self._ttl = timedelta(hours=ttl_hours)
         self._locks: dict[str, threading.Lock] = {}
         self._locks_guard = threading.Lock()
-        self.role_hits = 0
-        self.role_misses = 0
+        # Private and lock-guarded: a bare ``+= 1`` is a read-modify-write and
+        # loses updates under a fan-out. Read them via :meth:`stats`.
+        self._role_hits = 0
+        self._role_misses = 0
+        self._counter_lock = threading.Lock()
 
     def _lock_for(self, org: str) -> threading.Lock:
         with self._locks_guard:
@@ -125,6 +139,10 @@ class AccountCache:
 
             def _write(conn: sqlite3.Connection) -> None:
                 conn.execute("DELETE FROM accounts WHERE org = ?", (org,))
+                # Role grants share the org-level TTL: drop them with the
+                # accounts so grants added or revoked since the last sync
+                # are re-fetched instead of living forever.
+                conn.execute("DELETE FROM account_roles WHERE org = ?", (org,))
                 conn.executemany(
                     "INSERT INTO accounts (org, account_id, account_name, discovered_at) "
                     "VALUES (?, ?, ?, ?)",
@@ -231,14 +249,29 @@ class AccountCache:
                 .fetchall()
             )
             if rows:
-                self.role_hits += 1
+                with self._counter_lock:
+                    self._role_hits += 1
                 return [r["role_name"] for r in rows]
 
-        self.role_misses += 1
+        with self._counter_lock:
+            self._role_misses += 1
+
+        # Snapshot the directory generation before the network call. A refresh
+        # landing while this fetch is in flight wipes the org's role rows, and
+        # writing these results afterwards would resurrect pre-refresh grants
+        # over that clean slate - keeping a revoked role alive for a whole TTL.
+        generation = _read_generation(self._pool.get(), org)
         roles = list_account_roles(region, access_token, account_id)
         now = _now_utc().strftime(_TIME_FORMAT)
 
         def _write(conn: sqlite3.Connection) -> None:
+            if _read_generation(conn, org) != generation:
+                logger.debug(
+                    "Discarding roles for org=%s account=%s: directory refreshed mid-fetch",
+                    org,
+                    account_id,
+                )
+                return
             conn.execute(
                 "DELETE FROM account_roles WHERE org = ? AND account_id = ?", (org, account_id)
             )
@@ -263,5 +296,10 @@ class AccountCache:
         self._pool.with_write(_write)
 
     def stats(self) -> dict[str, int]:
-        """Return per-instance counters for perf tooling."""
-        return {"role_hits": self.role_hits, "role_misses": self.role_misses}
+        """Return a consistent snapshot of per-instance counters for perf tooling.
+
+        Read under the counter lock so the two values describe the same moment
+        rather than straddling a concurrent update.
+        """
+        with self._counter_lock:
+            return {"role_hits": self._role_hits, "role_misses": self._role_misses}
