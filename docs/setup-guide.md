@@ -396,7 +396,9 @@ In chat:
 Log in to org1.
 ```
 
-A browser window opens once, showing a user code to approve. After approval the SSO access token is
+A browser window opens once, showing a user code to approve. If it does not open, the chat shows a
+message with the link and the code; open the link yourself.
+Some clients hide server messages. If you see nothing, look in the client's MCP output panel. After approval the SSO access token is
 cached in `tokens/org1.json` and reused until it expires - typically 8-12 hours, set by your
 Identity Center session policy.
 
@@ -471,6 +473,6 @@ A full MCP handshake smoke test is in [../examples/README.md](../examples/README
 | `Config file not found at ...` | Wrong path, or `AWS_SSO_MCP_CONFIG` points somewhere that does not exist |
 | `No valid SSO session for: org1` | Not logged in, or the token expired. Say `log in to org1` |
 | Tools do not appear in VS Code | You are in Ask or Edit mode; switch to **Agent** mode |
-| Browser never opens | Headless host. The URL and code are printed to the server log; open them manually |
+| Browser never opens | The sign-in link and code are sent to the chat as a message (and to the server log). Open the link manually and enter the code |
 
 The full symptom-cause-fix table is in [troubleshooting.md](troubleshooting.md).

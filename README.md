@@ -1,6 +1,6 @@
 # aws-sso-mcp
 
-**Ask questions about your AWS accounts in plain English, across many accounts and organizations at once.**
+**Got more than one AWS account or org? Sign in once, ask in plain English, and get one merged answer from all of them, using the IAM roles your rules choose, never the AI's.**
 
 `aws-sso-mcp` is an [MCP (Model Context Protocol)](https://modelcontextprotocol.io) server. It plugs
 into a chat assistant such as GitHub Copilot Chat in VS Code or Claude Desktop, and lets that
@@ -12,6 +12,7 @@ assistant query and manage AWS through your **AWS IAM Identity Center (SSO)** lo
 
 ## Contents
 
+- [Is this for you?](#is-this-for-you)
 - [Why this exists](#why-this-exists)
 - [What you can do with it](#what-you-can-do-with-it)
 - [How it works in 30 seconds](#how-it-works-in-30-seconds)
@@ -23,6 +24,21 @@ assistant query and manage AWS through your **AWS IAM Identity Center (SSO)** lo
 - [Security](#security)
 - [Contributing](#contributing)
 - [License](#license)
+
+## Is this for you?
+
+**If you work in more than one AWS account, yes.** The more accounts and orgs you have, the more it saves you.
+
+- **Several orgs.** Keep every org in one config file. Switch between them in chat, or query
+  several in a single request. Each org needs its own login, and you never mix them up by accident.
+- **Dozens or hundreds of accounts.** Find accounts by name, id or environment, then ask one
+  question of all of them. No account-by-account console hopping, no profile juggling.
+- **A different role per account.** Prod gets `ReadOnlyAccess`, sandboxes get `PowerUserAccess`.
+  You write that once, and it is applied everywhere.
+- **Questions that cross accounts.** "Where is this running?", "Which accounts have public
+  buckets?", "What is stopped in prod?" Each is one sentence instead of an afternoon of clicking.
+
+If you only ever use a single account, it still works, but a plain AWS CLI profile is simpler.
 
 ## Why this exists
 

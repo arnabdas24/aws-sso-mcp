@@ -124,6 +124,43 @@ def test_login_success(tmp_path: Path, monkeypatch) -> None:
     stubber.deactivate()
 
 
+def test_login_logs_a_manual_link_when_no_browser_opens(
+    tmp_path: Path, monkeypatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """With no browser, the approval link and code must reach the logs (and so the chat)."""
+    portal = _portal()
+    client = boto3.client("sso-oidc", region_name="us-east-1")
+    stubber = Stubber(client)
+    link = "https://device.sso.us-east-1.amazonaws.com/?user_code=ABCD-EFGH"
+
+    stubber.add_response("register_client", {"clientId": "cid", "clientSecret": "csecret"})
+    stubber.add_response(
+        "start_device_authorization",
+        {
+            "deviceCode": "dcode",
+            "userCode": "ABCD-EFGH",
+            "verificationUri": "https://device.sso.us-east-1.amazonaws.com/",
+            "verificationUriComplete": link,
+            "expiresIn": 600,
+        },
+    )
+    stubber.add_response(
+        "create_token", {"accessToken": "atoken", "tokenType": "Bearer", "expiresIn": 3600}
+    )
+    stubber.activate()
+
+    monkeypatch.setattr(device_auth, "_build_sso_oidc_client", lambda p: client)
+    monkeypatch.setattr(device_auth.webbrowser, "open", lambda url: False)
+    monkeypatch.setattr(time, "sleep", lambda s: None)
+
+    with caplog.at_level("INFO", logger="aws_sso_mcp"):
+        device_auth.login(tmp_path, portal)
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any(link in m and "ABCD-EFGH" in m and "manually" in m for m in warnings)
+    stubber.deactivate()
+
+
 def test_login_times_out_when_user_never_approves(tmp_path: Path, monkeypatch) -> None:
     """An unapproved sign-in must end with a clear, actionable error - not hang forever."""
     portal = _portal()

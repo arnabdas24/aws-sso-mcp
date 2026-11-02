@@ -617,7 +617,7 @@ why dispatch is separate. The timeout charges **active** time only. `fan_out` re
 *`login(state_dir, portal)`*:
 1. `build_client("sso-oidc", region=portal.sso_region)`.
 2. `register_client` -> `start_device_authorization` (gets URL, user code, interval, expiry).
-3. `webbrowser.open(url)`, ignoring failure on headless hosts (URL and code are logged).
+3. `webbrowser.open(url)`. If it raises or returns `False` (headless host), a WARNING with the link and code is logged; both messages reach the chat via `MCPContextHandler`.
 4. `_poll_for_token`: loop `create_token`; on `AuthorizationPending` wait; on `SlowDown` add 5 s; on
    `ExpiredTokenException` or the deadline, raise `AwsCallError`; on success return.
 5. Compute expiry, `_write_cached_token` (JSON written to a `0600` temp file, `fsync`ed, then moved

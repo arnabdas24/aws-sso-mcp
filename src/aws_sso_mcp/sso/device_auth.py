@@ -254,16 +254,29 @@ def login(state_dir: Path, portal: PortalConfig) -> TokenStatus:
         expires_in = float(auth.get("expiresIn", _DEFAULT_DEVICE_CODE_TTL_SECONDS))
         deadline = time.monotonic() + expires_in
 
+        # These records are forwarded to the chat client (see MCPContextHandler),
+        # so the link is visible there even when no browser can be opened.
         logger.info(
-            "Approve sign-in for org=%s at: %s (code: %s)",
+            "Signing in to org '%s'. A browser window should open. If it does not, "
+            "open this link manually to approve: %s (code: %s)",
             portal.name,
             verification_url,
             user_code or "n/a",
         )
+        # webbrowser.open reports "no browser available" by returning False, not by raising.
+        opened = False
         try:
-            webbrowser.open(verification_url)
+            opened = webbrowser.open(verification_url)
         except Exception as exc:  # noqa: BLE001 - headless hosts have no browser
-            logger.warning("Could not auto-open browser: %s", exc)
+            logger.debug("Browser auto-open raised: %s", exc)
+        if not opened:
+            logger.warning(
+                "Could not open a browser automatically. Open this link manually to "
+                "sign in to org '%s': %s (code: %s)",
+                portal.name,
+                verification_url,
+                user_code or "n/a",
+            )
 
         token_response = _poll_for_token(
             client,
