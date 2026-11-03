@@ -19,6 +19,7 @@ jobs:
   secrets:
     name: gitleaks (secret scan)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -33,12 +34,14 @@ jobs:
           curl -sSfL \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz" \
             -o gitleaks.tar.gz
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum --check
           tar -xzf gitleaks.tar.gz gitleaks
           ./gitleaks git . --no-banner --redact
 
   dependencies:
     name: pip-audit (dependency scan)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -50,19 +53,21 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install project + pip-audit
-        run: |
-          python -m pip install --upgrade pip pip-audit
-          pip install -e .
+      - name: Install uv + pip-audit
+        run: python -m pip install --upgrade pip uv pip-audit
+
+      # Audit exactly what uv.lock pins (runtime + dev), not whatever pip
+      # would resolve today. The project itself is excluded: it is not on PyPI.
+      - name: Export the locked dependency set
+        run: uv export --frozen --all-extras --no-emit-project --no-hashes -o audit-requirements.txt
 
       - name: Audit dependencies for known vulnerabilities
-        run: |
-          pip freeze --exclude-editable > audit-requirements.txt
-          pip-audit --strict --no-deps --disable-pip -r audit-requirements.txt
+        run: pip-audit --strict --no-deps --disable-pip -r audit-requirements.txt
 
   workflows:
     name: zizmor + actionlint (CI hardening)
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
