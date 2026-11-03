@@ -68,21 +68,22 @@ This server removes that grind:
 
 ## How it works in 30 seconds
 
-```mermaid
-flowchart LR
-    You([You]) -->|plain English| Chat[Chat assistant<br/>Copilot / Claude]
-    Chat -->|MCP tool call<br/>over stdio| Server[aws-sso-mcp]
-    Server -->|1. OIDC device login| SSO[(AWS IAM<br/>Identity Center)]
-    Server -->|2. short-lived role credentials| SSO
-    Server -->|3. the actual API call<br/>per account, in parallel| AWS[(AWS accounts<br/>EC2, S3, IAM ...)]
-    AWS --> Server
-    Server -->|merged, redacted result| Chat
-    Chat -->|answer| You
+```text
+You --plain English--> Chat assistant (Copilot / Claude)
+                          |  MCP tool call over stdio
+                          v
+                     aws-sso-mcp
+        1. OIDC device login ------------> AWS IAM Identity Center
+        2. short-lived role credentials <-- AWS IAM Identity Center
+        3. the actual API call, per account, in parallel
+                          |------------> AWS accounts (EC2, S3, IAM ...)
+                          v
+        merged, redacted result --> Chat assistant --> answer to you
 ```
 
 The full, step-by-step explanation (with code references) is in
-[docs/how-it-works.md](docs/how-it-works.md). The detailed connectivity diagrams are in
-[docs/architecture.md](docs/architecture.md).
+[docs/how-it-works.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/how-it-works.md). The detailed connectivity diagrams are in
+[docs/architecture.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/architecture.md).
 
 ## Quick start
 
@@ -99,7 +100,8 @@ aws-sso-mcp --version
 
 ```bash
 mkdir -p ~/.config/aws-sso-mcp
-cp examples/config.example.toml ~/.config/aws-sso-mcp/config.toml
+curl -fsSL https://raw.githubusercontent.com/arnabdas24/aws-sso-mcp/main/examples/config.example.toml \
+  -o ~/.config/aws-sso-mcp/config.toml
 ```
 
 Edit it and set your `start_url` and `region` per org. The minimum is:
@@ -130,7 +132,7 @@ On Windows, use `%USERPROFILE%\.config\aws-sso-mcp\config.toml`, or point `AWS_S
 ```
 
 Claude Desktop, Claude Code, Cursor, Windsurf and non-default config paths are all covered in
-[docs/setup-guide.md](docs/setup-guide.md).
+[docs/setup-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/setup-guide.md).
 
 **4. Chat**
 
@@ -140,8 +142,8 @@ In Agent mode, try:
 2. `Find accounts with "prod" in the name.`
 3. `List stopped EC2 instances in us-east-1 across every prod account.`
 
-More ready-made phrasings, plus mistakes to avoid, are in [docs/prompt-guide.md](docs/prompt-guide.md).
-To see the exact tool call behind each sentence, read [docs/examples.md](docs/examples.md).
+More ready-made phrasings, plus mistakes to avoid, are in [docs/prompt-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/prompt-guide.md).
+To see the exact tool call behind each sentence, read [docs/examples.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/examples.md).
 
 ## Safety model
 
@@ -150,34 +152,34 @@ Read this before pointing the server at real accounts.
 | Property | What it means |
 |---|---|
 | **IAM is the only gate** | The server does **not** block writes locally. If your SSO role may delete something, a request can delete it. Use read-only roles in your config unless you truly need more. |
-| **Role choice is deterministic** | The AI model never picks a role. Rules in your TOML do (see [roles.py](src/aws_sso_mcp/roles.py)). |
+| **Role choice is deterministic** | The AI model never picks a role. Rules in your TOML do (see [roles.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/roles.py)). |
 | **No surprise browser windows** | Only the `login` tool starts a sign-in. Queries fail with clear instructions instead. |
 | **Blast-radius cap** | A selection wider than `max_accounts` (default 200) is refused until you confirm it. |
-| **Secrets are redacted** | Tokens and keys are scrubbed from logs and tool output ([redact.py](src/aws_sso_mcp/redact.py)). Credentials are never written to disk. |
-| **Config cannot hold secrets** | The loader rejects keys that look like secrets ([config.py](src/aws_sso_mcp/config.py)). |
+| **Secrets are redacted** | Tokens and keys are scrubbed from logs and tool output ([redact.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/redact.py)). Credentials are never written to disk. |
+| **Config cannot hold secrets** | The loader rejects keys that look like secrets ([config.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/config.py)). |
 | **Everything is audited** | One line per call in `audit.jsonl`, with writes flagged. |
 
 AWS response data (tags, names, log lines) is untrusted text that reaches the model. This server bounds
 its size but cannot remove prompt-injection attempts. Details in
-[docs/architecture.md](docs/architecture.md#7-security-layers).
+[docs/architecture.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/architecture.md#7-security-layers).
 
 ## Documentation map
 
 | Document | Read it if you want to... |
 |---|---|
-| [docs/how-it-works.md](docs/how-it-works.md) | Understand, step by step and in plain language, what happens from your sentence to the answer |
-| [docs/architecture.md](docs/architecture.md) | See connectivity diagrams, components, threads, storage and security layers |
-| [docs/code-walkthrough.md](docs/code-walkthrough.md) | Understand each Python file step by step: who calls what, and how files link |
-| [docs/technical-deep-dive.md](docs/technical-deep-dive.md) | Internals: authentication, token and credential caching, locks, threads, timeouts, known quirks |
-| [docs/prompt-guide.md](docs/prompt-guide.md) | Learn what to say to your assistant, with copy-paste examples |
-| [docs/tools-reference.md](docs/tools-reference.md) | Look up every tool, argument and response shape |
-| [docs/configuration.md](docs/configuration.md) | Configure orgs, environments, roles and performance |
-| [docs/developer-guide.md](docs/developer-guide.md) | Set up, test, extend and release the project |
-| [docs/adr/README.md](docs/adr/README.md) | Understand *why* a design decision was made, and what it cost |
-| [docs/troubleshooting.md](docs/troubleshooting.md) | Fix a specific error message |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Contribute code: setup, quality gates, commit conventions |
-| [SECURITY.md](SECURITY.md) | Report a vulnerability, or review the threat model |
-| [examples/README.md](examples/README.md) | Install and wire up the server in various MCP clients |
+| [docs/how-it-works.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/how-it-works.md) | Understand, step by step and in plain language, what happens from your sentence to the answer |
+| [docs/architecture.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/architecture.md) | See connectivity diagrams, components, threads, storage and security layers |
+| [docs/code-walkthrough.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/code-walkthrough.md) | Understand each Python file step by step: who calls what, and how files link |
+| [docs/technical-deep-dive.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/technical-deep-dive.md) | Internals: authentication, token and credential caching, locks, threads, timeouts, known quirks |
+| [docs/prompt-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/prompt-guide.md) | Learn what to say to your assistant, with copy-paste examples |
+| [docs/tools-reference.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/tools-reference.md) | Look up every tool, argument and response shape |
+| [docs/configuration.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/configuration.md) | Configure orgs, environments, roles and performance |
+| [docs/developer-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/developer-guide.md) | Set up, test, extend and release the project |
+| [docs/adr/README.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/adr/README.md) | Understand *why* a design decision was made, and what it cost |
+| [docs/troubleshooting.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/troubleshooting.md) | Fix a specific error message |
+| [CONTRIBUTING.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/CONTRIBUTING.md) | Contribute code: setup, quality gates, commit conventions |
+| [SECURITY.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/SECURITY.md) | Report a vulnerability, or review the threat model |
+| [examples/README.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/examples/README.md) | Install and wire up the server in various MCP clients |
 
 ## Project layout
 
@@ -202,14 +204,14 @@ src/aws_sso_mcp/
 
 ## Requirements and status
 
-- Python 3.12 or newer, `boto3`, and the `mcp` SDK (see [pyproject.toml](pyproject.toml)).
+- Python 3.12 or newer, `boto3`, and the `mcp` SDK (see [pyproject.toml](https://github.com/arnabdas24/aws-sso-mcp/blob/main/pyproject.toml)).
 - Alpha (`0.1.x`): interfaces may change.
 - Transport is **stdio**. The server is started by your chat client, one process per session.
 
 ## Security
 
 Credentials are brokered, never stored on disk; see [Safety model](#safety-model) and the full
-threat model in [SECURITY.md](SECURITY.md). Report vulnerabilities **privately** via
+threat model in [SECURITY.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/SECURITY.md). Report vulnerabilities **privately** via
 [GitHub Security Advisories](https://github.com/arnabdas24/aws-sso-mcp/security/advisories/new),
 not public issues.
 
@@ -222,9 +224,9 @@ gh attestation verify ./aws_sso_mcp-<version>-py3-none-any.whl --repo arnabdas24
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Every change must pass `ruff`, `mypy --strict`, the test
+See [CONTRIBUTING.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/CONTRIBUTING.md). Every change must pass `ruff`, `mypy --strict`, the test
 suite with its global and per-module coverage floors, and `vulture`.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/arnabdas24/aws-sso-mcp/blob/main/LICENSE)
