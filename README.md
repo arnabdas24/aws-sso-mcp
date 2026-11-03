@@ -184,8 +184,7 @@ its size but cannot remove prompt-injection attempts. Details in
 |---|---|
 | [docs/how-it-works.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/how-it-works.md) | Understand, step by step and in plain language, what happens from your sentence to the answer |
 | [docs/architecture.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/architecture.md) | See connectivity diagrams, components, threads, storage and security layers |
-| [docs/code-walkthrough.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/code-walkthrough.md) | Understand each Python file step by step: who calls what, and how files link |
-| [docs/technical-deep-dive.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/technical-deep-dive.md) | Internals: authentication, token and credential caching, locks, threads, timeouts, known quirks |
+| [docs/internals.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/internals.md) | Contributor map of the code: who calls what, every cache and lock, known quirks, debugging cookbook |
 | [docs/prompt-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/prompt-guide.md) | Learn what to say to your assistant, with copy-paste examples |
 | [docs/tools-reference.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/tools-reference.md) | Look up every tool, argument and response shape |
 | [docs/configuration.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/configuration.md) | Configure orgs, environments, roles and performance |

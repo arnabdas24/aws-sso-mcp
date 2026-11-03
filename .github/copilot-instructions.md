@@ -1,7 +1,7 @@
 # aws-sso-mcp — repository instructions
 
 Python 3.12+ MCP server for AWS IAM Identity Center (SSO). Package: `src/aws_sso_mcp`.
-Deep docs: `docs/developer-guide.md`, `docs/technical-deep-dive.md`.
+Deep docs: `docs/developer-guide.md`, `docs/internals.md`.
 Detailed rules live in `.github/instructions/` (`python`, `security`, `code-reviewer`).
 
 ## Commands (run before finishing any change)

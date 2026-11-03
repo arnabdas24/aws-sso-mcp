@@ -156,8 +156,7 @@ Suggested reading order for a new contributor:
 
 | # | File | Why read it |
 |---|---|---|
-| 0 | [code-walkthrough.md](code-walkthrough.md) | A per-file map with call chains; keep it open while reading the code |
-| 0 | [technical-deep-dive.md](technical-deep-dive.md) | Function-level mechanics: auth, token/credential caching, concurrency, known quirks |
+| 0 | [internals.md](internals.md) | Module map, call chains, cache and lock inventories, quirks, debugging cookbook; keep it open while reading the code |
 | 1 | [server.py](../src/aws_sso_mcp/server.py) | The public surface: every tool, `_safe`, `_get_state` |
 | 2 | [fanout.py](../src/aws_sso_mcp/fanout.py) | The heart: `run_fanout` and `_FanOut` |
 | 3 | [planner.py](../src/aws_sso_mcp/planner.py), [roles.py](../src/aws_sso_mcp/roles.py) | Which accounts, which role |

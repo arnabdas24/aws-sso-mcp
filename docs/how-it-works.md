@@ -294,22 +294,21 @@ on, the pool could fill up with waiters and **deadlock**. Separate pools prevent
 **Code:** `_FanOut.service_step()` in `fanout.py`, which calls your `_call`, which calls
 `execute_call()` in [engine/catalog.py](../src/aws_sso_mcp/engine/catalog.py).
 
-`execute_call` is the only place the server talks to a service API:
+`execute_call` is the only place the server talks to a service API. The three behaviours worth
+knowing as a user:
 
-1. Requires a non-empty `region`. It is **never defaulted**.
-2. Builds (or reuses) a boto3 client through [awscfg.py](../src/aws_sso_mcp/awscfg.py). Clients are cached
-   per session, so credentials from account B can never be reused for account A.
-3. Converts `DescribeInstances` to boto3's `describe_instances`. If that method does not exist you get
-   a clear `UnknownOperation` error.
-4. **Paginates automatically.** If the operation supports pagination it fetches every page, up to
-   `max_items`. If cut short, the response contains `_truncated` explaining it. You never get a silent
+1. **A region is always required.** It is never defaulted or guessed.
+2. **Pagination is automatic.** Every page is fetched and merged, up to `max_items`. If that cap cut
+   the answer short, the response says so with a `_truncated` marker - you never get a silent
    partial answer.
-5. Converts boto errors into clean `AwsCallError` messages (code plus message only). Raw botocore
-   exceptions can embed request data, so they never cross the tool boundary.
-6. Removes `ResponseMetadata`, which is just noise.
+3. **Errors are cleaned up.** AWS failures come back as a readable
+   `service:operation failed (Code): message`, never a raw SDK dump.
 
 Importantly: **nothing is refused locally.** Reads and writes are both sent. IAM alone decides.
 `is_read_operation()` only *labels* calls as read or write for the audit log.
+
+For client caching, operation-name translation and the rest, see
+[internals.md](internals.md#module-reference).
 
 ### Step 8. Per-account isolation and timeouts
 
