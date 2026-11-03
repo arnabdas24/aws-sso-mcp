@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.1.0...v0.1.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **ci:** pin pypi-publish to the commit SHA, not the tag object ([0519b39](https://github.com/arnabdas24/aws-sso-mcp/commit/0519b394c56eaefe8cb856ac6438fa497cde0f7f))
+
+
+### Documentation
+
+* **readme:** explain that the server inherits IAM permissions ([#6](https://github.com/arnabdas24/aws-sso-mcp/issues/6)) ([7e95605](https://github.com/arnabdas24/aws-sso-mcp/commit/7e95605515cd013d25f733429e7a550e9b382c04))
+
 ## 0.1.0 (2026-11-03)
 
 
