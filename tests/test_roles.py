@@ -65,29 +65,26 @@ def test_classify_environment_no_match(portal: PortalConfig) -> None:
     assert classify_environment(portal, "billing-sandbox") is None
 
 
-def test_explicit_role_wins_when_granted(portal: PortalConfig) -> None:
+def test_resolve_role_accepts_no_override(portal: PortalConfig) -> None:
+    """The TOML rules are the only selector: there must be no way to name a role."""
+    with pytest.raises(TypeError):
+        resolve_role(  # type: ignore[call-arg]
+            portal=portal,
+            account_id="111111111111",
+            account_name="billing-dev",
+            granted_roles=["DevRole", "AdminRole"],
+            explicit_role="AdminRole",
+        )
+
+
+def test_granted_admin_role_is_not_used_when_rules_pick_another(portal: PortalConfig) -> None:
     result = resolve_role(
         portal=portal,
         account_id="111111111111",
         account_name="billing-dev",
-        granted_roles=["DevRole", "ReadOnly", "AdminRole"],
-        explicit_role="AdminRole",
+        granted_roles=["AdminRole", "DevRole"],
     )
-    assert result.role == "AdminRole"
-    assert result.source == "explicit"
-
-
-def test_explicit_role_rejected_if_not_granted(portal: PortalConfig) -> None:
-    with pytest.raises(RoleResolutionError) as exc_info:
-        resolve_role(
-            portal=portal,
-            account_id="111111111111",
-            account_name="billing-dev",
-            granted_roles=["DevRole", "ReadOnly"],
-            explicit_role="AdminRole",
-        )
-    assert "AdminRole" in str(exc_info.value)
-    assert exc_info.value.available == ["DevRole", "ReadOnly"]
+    assert result.role == "DevRole"
 
 
 def test_environment_mapping_picks_primary_role(portal: PortalConfig) -> None:
@@ -123,26 +120,20 @@ def test_environment_first_role_pattern_priority(portal: PortalConfig) -> None:
     assert result.role == "ProdDeployer"
 
 
-def test_sole_grant_used_when_no_environment_matches(portal: PortalConfig) -> None:
-    result = resolve_role(
-        portal=portal,
-        account_id="333333333333",
-        account_name="billing-sandbox",
-        granted_roles=["OnlyRole"],
-    )
-    assert result.role == "OnlyRole"
-    assert result.source == "sole-grant"
-
-
-def test_ambiguous_without_mapping_raises(portal: PortalConfig) -> None:
+@pytest.mark.parametrize("granted", [["OnlyRole"], ["RoleA", "RoleB"]])
+def test_no_matching_rule_raises_even_with_granted_roles(
+    portal: PortalConfig, granted: list[str]
+) -> None:
+    """No default role: a sole grant is not used when no rule matches the account."""
     with pytest.raises(RoleResolutionError) as exc_info:
         resolve_role(
             portal=portal,
             account_id="333333333333",
             account_name="billing-sandbox",
-            granted_roles=["RoleA", "RoleB"],
+            granted_roles=granted,
         )
-    assert exc_info.value.available == ["RoleA", "RoleB"]
+    assert exc_info.value.available == granted
+    assert "no [environments] rule" in str(exc_info.value)
 
 
 def test_environment_matched_but_no_role_or_fallback_matches(portal: PortalConfig) -> None:
@@ -184,7 +175,6 @@ def test_no_granted_roles_says_so_plainly() -> None:
             account_id="111111111111",
             account_name="acct-a",
             granted_roles=[],
-            explicit_role=None,
         )
 
     message = str(excinfo.value)

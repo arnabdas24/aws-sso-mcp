@@ -466,16 +466,14 @@ involved.**
 
 **How it works** (`resolve_role`)
 
-1. If `explicit_role` is given: return it with `source="explicit"` if it is in `granted_roles`, else raise
-   `RoleResolutionError` listing what is granted.
-2. `classify_environment(portal, account_name)` walks `portal.environments` in file order; the first
+1. `classify_environment(portal, account_name)` walks `portal.environments` in file order; the first
    environment with any matching pattern wins (`_matches` supports `exact`, `startswith`, `endswith`,
    `contains`, `regex`).
-3. If an environment matched: `_first_role_match` over `env.roles` (patterns in order, against granted
+2. If an environment matched: `_first_role_match` over `env.roles` (patterns in order, against granted
    roles), then over `env.fallback`. A hit returns `source="environment"`.
-4. If exactly one role is granted: return it with `source="sole-grant"`.
-5. Otherwise raise `RoleResolutionError` with a reason (no grants / no environment and several grants /
-   environment matched but no role pattern did).
+3. Otherwise raise `RoleResolutionError` with a reason (no grants / no environment rule matches / environment
+   matched but no role pattern did). There is no caller override and no sole-grant default
+   ([ADR 0007](adr/0007-toml-rules-are-the-only-role-selector.md)).
 
 **Called by:** `fanout._FanOut._build_session`, `server.explain_role_selection`, and
 `planner._AccountFilter.matches` (via `classify_environment`).
@@ -985,8 +983,8 @@ against `_ACCESS_DENIED_CODES`, which `fanout.service_step` uses to decide wheth
 
 ## Exercises: trace it yourself
 
-1. **Follow a failure.** Set `role="Nope"` in a query. Which function raises, and where does the message end
-   up in the response? *(Start at `roles.resolve_role`; it runs inside `credential_step`, so the executor
+1. **Follow a failure.** Query an account whose name matches no environment rule. Which function raises, and
+   where does the message end up in the response? *(Start at `roles.resolve_role`; it runs inside `credential_step`, so the executor
    reports it as that account's error.)*
 2. **Find the browser rule.** Search for `auto_login`. Confirm only the `login` tool can start a sign-in.
 3. **Watch a cache hit.** Run the same query twice; compare `perf_stats` before and after. Which counters

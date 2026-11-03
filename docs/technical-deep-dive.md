@@ -428,7 +428,7 @@ warmed  = None if refresh else self._warmed.get((org, account_id))
 if warmed:       token, granted = warmed
 else:            token   = _token_for(org)
                  granted = cache.roles_for_account(..., force=refresh)
-resolution = roles.resolve_role(portal, account_id, account_name, granted, explicit_role=selector.role)
+resolution = roles.resolve_role(portal, account_id, account_name, granted)
 session    = broker.get_session(org, region=portal.sso_region, account_id, role=resolution.role, access_token=token)
 return session, resolution
 ```
@@ -533,26 +533,23 @@ Submit all, then `future.result()` in submission order (results preserve order).
 
 Filters combine with **AND**; the singular/plural pairs merge into one set (OR within the pair).
 
-### 10.2 `roles.resolve_role(*, portal, account_id, account_name, granted_roles, explicit_role=None)`
+### 10.2 `roles.resolve_role(*, portal, account_id, account_name, granted_roles)`
 Pure and synchronous — **no network and no LLM involvement**.
 
 ```mermaid
 flowchart TD
-    S["resolve_role"] --> E{"explicit_role given?"}
-    E -- yes --> G{"in granted_roles?"}
-    G -- yes --> R1["RoleResolution(role, source='explicit')"]
-    G -- no --> X1["RoleResolutionError: requested role not granted"]
-    E -- no --> C["classify_environment(portal, account_name)"]
+    S["resolve_role"] --> C["classify_environment(portal, account_name)"]
     C --> EV{"environment matched?"}
     EV -- yes --> M1["_first_role_match(granted, env.roles, env.match)"]
     M1 -- none --> M2["_first_role_match(granted, env.fallback, env.match)"]
     M1 -- hit --> R2["RoleResolution(source='environment', environment=name)"]
     M2 -- hit --> R2
-    M2 -- none --> SG
-    EV -- no --> SG{"len(granted_roles) == 1?"}
-    SG -- yes --> R3["RoleResolution(source='sole-grant')"]
-    SG -- no --> X2["RoleResolutionError (lists granted roles)"]
+    M2 -- none --> X["RoleResolutionError (lists granted roles)"]
+    EV -- no --> X
 ```
+
+The TOML rules are the only selector: there is no caller-supplied role and no sole-grant default, so a
+prompt or injected AWS text cannot choose or escalate a role ([ADR 0007](adr/0007-toml-rules-are-the-only-role-selector.md)).
 
 * `_matches(value, pattern, mode)`: `exact`, `startswith`, `endswith`, `contains`, `regex` (`re.search`). The **same `mode`** is used for account-name patterns *and* role names within one environment (so `endswith "ReadOnlyAccess"` also matches `Custom-ReadOnlyAccess`).
 * `classify_environment` iterates `portal.environments.values()` in config order; **first environment whose any pattern matches wins**.

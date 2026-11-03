@@ -35,11 +35,13 @@ All optional; combined with **AND**; exclusions applied last.
 | `environment` | string | Accounts your TOML classifies into this environment |
 | `exclude_account_ids` | list | Dropped even if matched |
 | `exclude_account_names` | list | Dropped even if matched |
-| `role` | string | Force a role; must be granted on every selected account |
 | `max_accounts` | int | Raise the blast-radius cap for this call |
 | `max_items` | int | Raise the per-account pagination ceiling |
 
 With no selector at all, **every account in the active org** is targeted, subject to `max_accounts`.
+
+There is **no `role` argument**. The role comes only from your TOML environment rules; a client that sends
+one anyway has it ignored. The `role` field in each result shows what was used.
 
 ---
 
@@ -62,7 +64,7 @@ With no selector at all, **every account in the active org** is targeted, subjec
 | `cache_status` | `org?` | `orgs[]` (`org`, `account_count`, `last_full_sync`, `stale`) | Local only |
 | `search_accounts` | `name?`, `name_contains?`, `account_id?`, `org?`, `all_orgs=false`, `limit=200` | `matches[]` (`org`, `account_id`, `account_name`), `truncated`, optional `warning` | Auto-refreshes stale caches. Same substring semantics as query selectors |
 | `list_roles` | `account_id`, `org?`, `force_refresh=false` | `org`, `account_id`, `roles[]` | Cached; use `force_refresh` after a grant change |
-| `explain_role_selection` | `account_id`, `account_name`, `org?`, `role?` | `resolved`, `role`, `source`, `environment`, `granted_roles` (or `reason`) | Dry run; no service call |
+| `explain_role_selection` | `account_id`, `account_name`, `org?` | `resolved`, `role`, `source`, `environment`, `granted_roles` (or `reason`) | Dry run; no service call |
 
 ## Query tools
 

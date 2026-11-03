@@ -72,14 +72,23 @@ fallback = ["SecurityAudit"]
 | `roles` | yes | Role names to try first, in order, against roles **actually granted** to you on that account |
 | `fallback` | no | Tried only if nothing in `roles` was granted |
 
-### Role resolution order (recap)
+### How a role is chosen
 
-1. Explicit `role=` in the call (must be granted).
-2. Environment rule: first match in `roles`, else `fallback`.
-3. If exactly one role is granted, use it.
-4. Otherwise fail, listing the granted roles.
+Your environment rules are the **only** thing that selects a role:
 
-Use `explain_role_selection` to see which rule fired for a specific account.
+1. The account name is matched against each environment's `patterns` (first match wins).
+2. In that environment, the first entry in `roles` that you are granted is used, else the first in
+   `fallback`.
+3. If no environment matches, or none of its roles is granted, the account is refused and the error lists
+   the roles you do hold.
+
+There is no per-call override and no "default" or "only role granted" shortcut. A prompt, or text
+injected through AWS data, cannot choose or escalate a role. Rules can only pick from roles you were already
+granted, and IAM remains the authorization gate
+([ADR 0007](adr/0007-toml-rules-are-the-only-role-selector.md)).
+
+Every account you want to query must therefore match an environment. Use `explain_role_selection` to see
+which rule fires for a specific account.
 
 ### Matching examples
 
@@ -156,8 +165,8 @@ start_url = "https://acquired.awsapps.com/start"
 region = "us-east-1"
 ```
 
-`acquired` has no environments, so roles resolve only by `role=` or by the "exactly one granted role"
-rule.
+`acquired` has no environments, so every query against it is refused with "no [environments] rule in the
+config matches this account name". Add an environment before using it.
 
 ### Cautious defaults for a large estate
 

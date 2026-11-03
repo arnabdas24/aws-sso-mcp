@@ -130,7 +130,6 @@ def _selector(
     environment: str | None = None,
     exclude_account_ids: list[str] | None = None,
     exclude_account_names: list[str] | None = None,
-    role: str | None = None,
 ) -> AccountSelector:
     """Collect the account-selector arguments shared by the fan-out tools."""
     return AccountSelector(
@@ -144,7 +143,6 @@ def _selector(
         environment=environment,
         exclude_account_ids=exclude_account_ids,
         exclude_account_names=exclude_account_names,
-        role=role,
     )
 
 
@@ -400,13 +398,12 @@ def list_roles(
 
 @app.tool()
 def explain_role_selection(
-    account_id: str, account_name: str, org: str | None = None, role: str | None = None
+    account_id: str, account_name: str, org: str | None = None
 ) -> dict[str, Any]:
     """Dry-run deterministic role resolution for one account; makes no service call.
 
-    Shows exactly which role would be assumed and why - explicit override, TOML
-    environment mapping, or sole granted role - without the model ever choosing
-    a role itself.
+    Shows exactly which role the TOML environment rules would assume. The role is
+    never chosen by the model or by the caller, and there is no override argument.
     """
 
     def _run() -> dict[str, Any]:
@@ -424,7 +421,6 @@ def explain_role_selection(
                 account_id=account_id,
                 account_name=account_name,
                 granted_roles=granted,
-                explicit_role=role,
             )
         except RoleResolutionError as exc:
             return {"resolved": False, "reason": str(exc), "granted_roles": granted}
@@ -458,7 +454,6 @@ def aws_query(
     environment: str | None = None,
     exclude_account_ids: list[str] | None = None,
     exclude_account_names: list[str] | None = None,
-    role: str | None = None,
     max_accounts: int | None = None,
     max_items: int | None = None,
     ctx: Context | None = None,
@@ -475,8 +470,8 @@ def aws_query(
     ``region`` is always required and never defaulted. Account selectors decide
     which accounts are touched; with none given, every account in the active org
     is targeted, subject to the configured blast-radius cap. The model never
-    picks which IAM role to assume - pass ``role=`` to override the
-    deterministic TOML/sole-grant resolution.
+    picks which IAM role to assume, and neither does the caller: the role comes only
+    from the ``[portals.<org>.environments.*]`` rules in your TOML config.
 
     Any operation the assumed role may perform is dispatched - reads, writes,
     deletes, secret reads, all of it - with AWS IAM as the sole authorization
@@ -519,7 +514,6 @@ def aws_query(
                 environment=environment,
                 exclude_account_ids=exclude_account_ids,
                 exclude_account_names=exclude_account_names,
-                role=role,
             ),
             region=region,
             per_account=_call,
@@ -581,7 +575,6 @@ def run_dag(
     environment: str | None = None,
     exclude_account_ids: list[str] | None = None,
     exclude_account_names: list[str] | None = None,
-    role: str | None = None,
     max_accounts: int | None = None,
     max_items: int | None = None,
     ctx: Context | None = None,
@@ -646,7 +639,6 @@ def run_dag(
                 environment=environment,
                 exclude_account_ids=exclude_account_ids,
                 exclude_account_names=exclude_account_names,
-                role=role,
             ),
             region=region,
             per_account=_call_dag,

@@ -268,21 +268,17 @@ on, the pool could fill up with waiters and **deadlock**. Separate pools prevent
 **Code:** `_FanOut.credential_step()` and `_build_session()` in `fanout.py`.
 
 1. **Choose the role**, with no AI involved. `resolve_role()` in
-   [roles.py](../src/aws_sso_mcp/roles.py) applies this order:
+   [roles.py](../src/aws_sso_mcp/roles.py) uses your TOML rules and nothing else. There is no caller
+   override and no default role ([ADR 0007](adr/0007-toml-rules-are-the-only-role-selector.md)):
 
    ```mermaid
    flowchart TD
-       A{Explicit role= given?} -->|yes, and granted| R1[Use it: source=explicit]
-       A -->|yes, not granted| E1[Error listing granted roles]
-       A -->|no| B{Account name matches<br/>an environment rule?}
-       B -->|yes| C{A role in roles= is granted?}
+       B{Account name matches<br/>an environment rule?} -->|yes| C{A role in roles= is granted?}
        C -->|yes| R2[Use it: source=environment]
        C -->|no| D{A role in fallback= is granted?}
        D -->|yes| R2
-       D -->|no| F
-       B -->|no| F{Exactly one role granted?}
-       F -->|yes| R3[Use it: source=sole-grant]
-       F -->|no| E2[Error listing granted roles]
+       D -->|no| E[Error listing granted roles]
+       B -->|no| E
    ```
 
    The environment rules are classified by `classify_environment()`: the first environment whose
@@ -421,7 +417,7 @@ step. A malformed DAG is reported as `{"dag_error": ...}` in the result.
 | Unknown org | `require_portal` -> `OrgNotFoundError` | Lists configured orgs |
 | Selection too wide | `plan_targets` -> `McpError` | Narrow it, or pass `max_accounts` |
 | Account name ambiguous | `resolve_targets` -> `AmbiguousAccountError` | Disambiguate with `org=` / `account_id=` |
-| No unique role | `resolve_role` -> `RoleResolutionError` | Lists granted roles; pass `role=` |
+| No rule selects a role | `resolve_role` -> `RoleResolutionError` | Lists granted roles; fix the `[environments]` rules |
 | AWS denies the call | `execute_call` -> `AwsCallError` | Retried once, then reported per account |
 | One account is slow | `_await_step` | That account fails with a timeout, others continue |
 | Unexpected bug | `_safe` | Short redacted error plus a hint to check the server log |

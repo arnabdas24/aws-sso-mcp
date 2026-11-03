@@ -67,8 +67,8 @@ Tip: log in **before** your first query. Queries never start a login themselves.
 | `What roles do I have on account 123456789012?` | `list_roles` |
 | `Which role would be used for shop-prod, and why?` | `explain_role_selection` (a dry run, no AWS call) |
 
-`explain_role_selection` is excellent for debugging. It tells you the role and the source (`explicit`,
-`environment` or `sole-grant`).
+`explain_role_selection` is excellent for debugging. It tells you which role your TOML rules would pick
+and why, or that no rule matches the account.
 
 ## Querying prompts (by service)
 
@@ -123,7 +123,6 @@ touching any real resources.
 | Exclude some | `...in every prod account except bank-prod` |
 | One org | `...in org2` |
 | Several orgs | `...across org1 and org2` (an explicit opt-in to a cross-org query) |
-| Force a role | `...using the SecurityAudit role` |
 | Allow a very wide run | `...across all 340 accounts; I confirm raising the account cap` |
 
 **Default scope:** with no org given, only the **active org** is used. It never silently widens to all orgs.
@@ -190,7 +189,8 @@ habits:
 2. **Dry run the selection first**: `Which accounts would "delete these snapshots" touch? Only list them.`
 3. **Name the exact account(s)** for any change. Avoid `environment` or `name_contains` for writes.
 4. **Ask for a plan, then confirm**: `Describe the exact API calls you will make. Wait for my "go".`
-5. **Use `role=`** deliberately for a write: `...using the PowerUserAccess role in sandbox-dev only.`
+5. **Choose roles in your config, not in the prompt.** Asking for "the PowerUserAccess role" has no effect;
+   the role comes only from your TOML rules.
 6. **Review the audit log afterwards.** Entries with `"write": true` are your changes.
 
 Example, safe:
@@ -199,7 +199,7 @@ Example, safe:
 >
 > *(review the list)*
 >
-> `Terminate exactly those instance ids, using the PowerUserAccess role, in sandbox-dev only.`
+> `Terminate exactly those instance ids in sandbox-dev only.`
 
 Example, risky (avoid):
 
@@ -227,8 +227,7 @@ Show only [FIELDS]. Group by account.
 ```
 
 ```text
-Using [ROLE or "the default role"], run [SERVICE] [OPERATION] in [REGION]
-on [ACCOUNT SELECTION]. Parameters: [JSON or plain English filters].
+Run [SERVICE] [OPERATION] in [REGION] on [ACCOUNT SELECTION]. Parameters: [JSON or plain English filters].
 Do not change anything.
 ```
 

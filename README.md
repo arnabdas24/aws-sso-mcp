@@ -167,7 +167,7 @@ Read this before pointing the server at real accounts.
 | Property | What it means |
 |---|---|
 | **IAM is the only gate** | The server does **not** block writes locally. If your SSO role may delete something, a request can delete it. Use read-only roles in your config unless you truly need more. |
-| **Role choice is deterministic** | The AI model never picks a role. Rules in your TOML do (see [roles.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/roles.py)). |
+| **Your TOML is the only role selector** | Neither the AI model nor a prompt can pick or override a role. Only your environment rules do, and an account that matches no rule is refused (see [roles.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/roles.py)). |
 | **No surprise browser windows** | Only the `login` tool starts a sign-in. Queries fail with clear instructions instead. |
 | **Blast-radius cap** | A selection wider than `max_accounts` (default 200) is refused until you confirm it. |
 | **Secrets are redacted** | Tokens and keys are scrubbed from logs and tool output ([redact.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/redact.py)). Credentials are never written to disk. |
