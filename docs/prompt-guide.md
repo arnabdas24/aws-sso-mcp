@@ -176,6 +176,10 @@ If the model produces a malformed plan you will see `dag_error`. Ask it to *show
 
 | You say | Purpose |
 |---|---|
+| `Show my configuration.` | `config_show`: the resolved config (it holds no secrets by design) |
+| `Check that my config file is valid.` | `config_validate`: parses and reports, without applying |
+| `How fresh is the account cache?` | `cache_status`: per-org account count, last sync, staleness |
+| `Refresh the account list.` | `refresh_accounts`: forces a rebuild, ignoring the TTL |
 | `Show performance stats.` | `perf_stats`: credential and role cache hit rates, pool sizes |
 | `Why was that fan-out slow?` | Assistant can combine `perf_stats` with your timings |
 | `Show the last few audit entries.` | Assistant reads `audit.jsonl` if it has file access |

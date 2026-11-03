@@ -86,7 +86,9 @@ Or run everything the hooks run: `uv run pre-commit run --all-files`.
 ## Quality gates
 
 CI ([.github/workflows/ci.yml](../.github/workflows/ci.yml)) runs the same checks, using
-`uv sync --locked --extra dev`.
+`uv sync --locked --extra dev`. The copy-paste command list lives in
+[CONTRIBUTING.md](../CONTRIBUTING.md#quality-gates); the table below explains what each gate is
+for. **Adding or removing a gate means updating both.**
 
 | Gate | Command | Notes |
 |---|---|---|

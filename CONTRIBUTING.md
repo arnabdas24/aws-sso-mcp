@@ -18,7 +18,8 @@ uv run pre-commit install
 
 ## Quality gates
 
-These are exactly what CI enforces, so run them before pushing:
+These are exactly what CI enforces, so run them before pushing. Each gate is explained in
+[`docs/developer-guide.md`](docs/developer-guide.md#quality-gates):
 
 ```bash
 uv run ruff check . && uv run ruff format --check .

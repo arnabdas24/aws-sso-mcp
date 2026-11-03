@@ -398,13 +398,8 @@ A wide query usually returns a mix. That is normal, not an error.
 
 ## 14. Diagnostics
 
-| You say | Tool | Tells you |
-|---|---|---|
-| *Show my configuration.* | `config_show` | The resolved config (it contains no secrets by design) |
-| *Is my config valid?* | `config_validate` | Parse and validation result |
-| *How fresh is the account cache?* | `cache_status` | Per-org account count, last sync, staleness |
-| *Refresh the account list.* | `refresh_accounts` | Forces a rebuild, ignoring the TTL |
-| *Show performance stats.* | `perf_stats` | Cache hit rates and credential broker counters |
+Diagnostic prompts (`config_show`, `config_validate`, `cache_status`, `refresh_accounts`,
+`perf_stats`) are listed with the rest of the phrasings in
+[prompt-guide.md](prompt-guide.md#operational-and-diagnostic-prompts).
 
-See [tools-reference.md](tools-reference.md) for every argument of every tool, and
-[prompt-guide.md](prompt-guide.md) for more ways to phrase a request.
+See [tools-reference.md](tools-reference.md) for every argument of every tool.
