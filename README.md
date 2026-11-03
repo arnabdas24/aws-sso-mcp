@@ -167,7 +167,7 @@ Read this before pointing the server at real accounts.
 | Property | What it means |
 |---|---|
 | **IAM is the only gate** | The server does **not** block writes locally. If your SSO role may delete something, a request can delete it. Use read-only roles in your config unless you truly need more. |
-| **Role choice is deterministic** | The AI model never picks a role. Rules in your TOML do (see [roles.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/roles.py)). |
+| **Your TOML is the only role selector** | Neither the AI model nor a prompt can pick or override a role. Only your environment rules do, and an account that matches no rule is refused (see [roles.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/roles.py)). |
 | **No surprise browser windows** | Only the `login` tool starts a sign-in. Queries fail with clear instructions instead. |
 | **Blast-radius cap** | A selection wider than `max_accounts` (default 200) is refused until you confirm it. |
 | **Secrets are redacted** | Tokens and keys are scrubbed from logs and tool output ([redact.py](https://github.com/arnabdas24/aws-sso-mcp/blob/main/src/aws_sso_mcp/redact.py)). Credentials are never written to disk. |
@@ -184,8 +184,7 @@ its size but cannot remove prompt-injection attempts. Details in
 |---|---|
 | [docs/how-it-works.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/how-it-works.md) | Understand, step by step and in plain language, what happens from your sentence to the answer |
 | [docs/architecture.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/architecture.md) | See connectivity diagrams, components, threads, storage and security layers |
-| [docs/code-walkthrough.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/code-walkthrough.md) | Understand each Python file step by step: who calls what, and how files link |
-| [docs/technical-deep-dive.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/technical-deep-dive.md) | Internals: authentication, token and credential caching, locks, threads, timeouts, known quirks |
+| [docs/internals.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/internals.md) | Contributor map of the code: who calls what, every cache and lock, known quirks, debugging cookbook |
 | [docs/prompt-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/prompt-guide.md) | Learn what to say to your assistant, with copy-paste examples |
 | [docs/tools-reference.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/tools-reference.md) | Look up every tool, argument and response shape |
 | [docs/configuration.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/configuration.md) | Configure orgs, environments, roles and performance |

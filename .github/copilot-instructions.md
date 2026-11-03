@@ -1,7 +1,7 @@
 # aws-sso-mcp — repository instructions
 
 Python 3.12+ MCP server for AWS IAM Identity Center (SSO). Package: `src/aws_sso_mcp`.
-Deep docs: `docs/developer-guide.md`, `docs/technical-deep-dive.md`.
+Deep docs: `docs/developer-guide.md`, `docs/internals.md`.
 Detailed rules live in `.github/instructions/` (`python`, `security`, `code-reviewer`).
 
 ## Commands (run before finishing any change)
@@ -25,6 +25,7 @@ ONLY service-API caller) → `sso/` → `cache/`, `awscfg`.
 ## Invariants — never break
 
 - IAM is the only authorization gate; do not add allow/deny logic.
+- Roles come only from the TOML environment rules: no `role=` tool argument, no sole-grant default.
 - Only `login()` may open a browser; everything else uses `auto_login=False`.
 - Region is always required; never default it.
 - Credentials live in memory only; never log, persist or return them.

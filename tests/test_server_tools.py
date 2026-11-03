@@ -159,7 +159,7 @@ def test_list_roles(sample_config_path: Path, isolated_env: Path, monkeypatch) -
     assert result["roles"] == ["ReadOnly", "AdminRole"]
 
 
-def test_explain_role_selection_sole_grant(
+def test_explain_role_selection_does_not_default_to_sole_grant(
     sample_config_path: Path, isolated_env: Path, monkeypatch
 ) -> None:
     state = _fresh_state(sample_config_path)
@@ -169,9 +169,21 @@ def test_explain_role_selection_sole_grant(
         lambda region, token, account_id: ["OnlyRole"],
     )
     result = server_module.explain_role_selection("111111111111", "some-account", org="org1")
-    assert result["resolved"] is True
-    assert result["role"] == "OnlyRole"
-    assert result["source"] == "sole-grant"
+    assert result["resolved"] is False
+    assert result["granted_roles"] == ["OnlyRole"]
+    assert "role" not in result
+
+
+def test_no_tool_lets_the_caller_choose_a_role() -> None:
+    """The TOML rules are the only role selector, so no tool may take a role argument."""
+    import inspect
+
+    for tool in (
+        server_module.aws_query,
+        server_module.run_dag,
+        server_module.explain_role_selection,
+    ):
+        assert "role" not in inspect.signature(tool).parameters
 
 
 def test_explain_role_selection_ambiguous_returns_reason(
@@ -197,11 +209,11 @@ def test_aws_query_allows_mutating_operation(
     _seed_token(state, "org1")
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
-        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a-dev")],
     )
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_account_roles",
-        lambda region, token, account_id: ["OnlyRole"],
+        lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -235,11 +247,11 @@ def test_aws_query_dispatches_secret_read_without_local_gate(
     _seed_token(state, "org1")
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
-        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a-dev")],
     )
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_account_roles",
-        lambda region, token, account_id: ["OnlyRole"],
+        lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -266,13 +278,13 @@ def test_aws_query_multi_account_write_needs_no_confirmation(
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
         lambda region, token: [
-            server_module_sso_account("111111111111", "acct-a"),
-            server_module_sso_account("222222222222", "acct-b"),
+            server_module_sso_account("111111111111", "acct-a-dev"),
+            server_module_sso_account("222222222222", "acct-b-dev"),
         ],
     )
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_account_roles",
-        lambda region, token, account_id: ["OnlyRole"],
+        lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -299,13 +311,13 @@ def test_aws_query_success_across_targets(
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
         lambda region, token: [
-            server_module_sso_account("111111111111", "acct-a"),
-            server_module_sso_account("222222222222", "acct-b"),
+            server_module_sso_account("111111111111", "acct-a-dev"),
+            server_module_sso_account("222222222222", "acct-b-dev"),
         ],
     )
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_account_roles",
-        lambda region, token, account_id: ["OnlyRole"],
+        lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -318,7 +330,7 @@ def test_aws_query_success_across_targets(
     )
     assert result["target_count"] == 2
     assert all(r["ok"] for r in result["results"])
-    assert all(r["role"] == "OnlyRole" for r in result["results"])
+    assert all(r["role"] == "DevRole" for r in result["results"])
 
     flush_audit(state.audit_log_path)
     audit_lines = state.audit_log_path.read_text(encoding="utf-8").splitlines()
@@ -346,11 +358,11 @@ def test_run_dag_success_single_step(
     _seed_token(state, "org1")
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
-        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a-dev")],
     )
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_account_roles",
-        lambda region, token, account_id: ["OnlyRole"],
+        lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
     monkeypatch.setattr(
@@ -649,11 +661,11 @@ def test_aws_query_max_items_overrides_the_configured_ceiling(
     _seed_token(state, "org1")
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
-        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a-dev")],
     )
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_account_roles",
-        lambda region, token, account_id: ["OnlyRole"],
+        lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
     seen: list[int] = []
@@ -685,11 +697,11 @@ def test_run_dag_max_items_reaches_every_step(
     _seed_token(state, "org1")
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
-        lambda region, token: [server_module_sso_account("111111111111", "acct-a")],
+        lambda region, token: [server_module_sso_account("111111111111", "acct-a-dev")],
     )
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_account_roles",
-        lambda region, token, account_id: ["OnlyRole"],
+        lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
     seen: list[int] = []

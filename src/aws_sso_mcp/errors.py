@@ -50,7 +50,7 @@ class NoTokenError(McpError):
 
 
 class RoleResolutionError(McpError):
-    """Raised when a role cannot be determined for an account (no mapping, no grant, ambiguous)."""
+    """Raised when the TOML rules select no granted role for an account."""
 
     def __init__(
         self, account_id: str, account_name: str, reason: str, available: list[str]

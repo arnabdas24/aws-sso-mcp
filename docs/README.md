@@ -8,7 +8,7 @@ flowchart TD
     Q -->|New user| U1[setup-guide.md<br/>install and connect] --> U2[prompt-guide.md] --> U2b[examples.md] --> U3[troubleshooting.md]
     Q -->|Admin / platform owner| A1[configuration.md] --> A2[architecture.md<br/>security layers] --> A3[how-it-works.md]
     Q -->|Curious: how does it work?| C1[how-it-works.md] --> C2[architecture.md]
-    Q -->|Contributor| D1[developer-guide.md] --> D2[architecture.md] --> D3[tools-reference.md]
+    Q -->|Contributor| D1[developer-guide.md] --> D2[architecture.md] --> D3[internals.md]
 ```
 
 | Document | Audience | Purpose |
@@ -17,8 +17,7 @@ flowchart TD
 | [setup-guide.md](setup-guide.md) | New users | Install, config file locations, client setup (VS Code, Claude Desktop, Claude Code, Cursor, Windsurf), first login |
 | [how-it-works.md](how-it-works.md) | Everyone (no AWS expertise needed) | Step-by-step explanation with code references and a worked example |
 | [architecture.md](architecture.md) | Engineers, reviewers, security | Connectivity diagrams, components, concurrency, storage, security layers, design decisions |
-| [code-walkthrough.md](code-walkthrough.md) | Contributors, reviewers | Every Python file: how it works step by step, who calls it, what it calls, plus call chains per tool |
-| [technical-deep-dive.md](technical-deep-dive.md) | Senior engineers, security reviewers | Function-level internals: device-auth flow, token and credential caches, SQLite, executor lanes, redaction, locks, quirks |
+| [internals.md](internals.md) | Contributors, reviewers, security | Module map, who-calls-whom, call chains per tool, every cache and lock, error model, known quirks, debugging cookbook |
 | [adr/README.md](adr/README.md) | Contributors, reviewers | Architecture Decision Records: what was decided, why, and what it costs |
 | [prompt-guide.md](prompt-guide.md) | Users | How to phrase requests; examples by service; safe-change habits |
 | [examples.md](examples.md) | Users, integrators | Worked examples: what you say, the exact tool call, the response |

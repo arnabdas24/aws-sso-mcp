@@ -118,7 +118,8 @@ region    = "us-east-1"
 ```
 
 A realistic one adds environment rules, which decide **which IAM role is assumed on each account**.
-The model never picks a role; these rules do:
+Neither the model nor the caller picks a role; only these rules do, and an account that matches none is
+refused:
 
 ```toml
 default_org    = "org1"

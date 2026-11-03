@@ -15,3 +15,4 @@ security posture. Copy [`0000-template.md`](0000-template.md).
 | [0004](0004-separate-token-cache.md) | A token cache separate from the AWS CLI's | Accepted |
 | [0005](0005-narrow-redaction-with-a-prefilter.md) | Narrow redaction patterns behind a literal prefilter | Accepted |
 | [0006](0006-token-expiry-margin.md) | Refuse tokens inside a five-minute expiry margin | Accepted |
+| [0007](0007-toml-rules-are-the-only-role-selector.md) | TOML rules are the only role selector | Accepted |

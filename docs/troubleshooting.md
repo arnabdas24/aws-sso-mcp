@@ -107,9 +107,8 @@ The same variable fixes `uv`/`pip` installs, which use `--system-certs` (older v
 
 | Message or symptom | Cause | Fix |
 |---|---|---|
-| `Could not resolve a role ... no environment mapping matched and multiple roles are granted` | Several roles, no rule | Add an environment rule or pass `role=` |
+| `Could not resolve a role ... no [environments] rule in the config matches this account name` | The account matches no environment. There is no default role | Add an environment rule that matches it |
 | `... classified as environment 'prod' but no configured role or fallback pattern matched a granted role` | Rule's `roles` / `fallback` do not appear in your grants | Run `list_roles`; align the rule (also check `match` mode) |
-| `... requested role 'X' is not granted on this account` | You forced a role you do not have there | `list_roles` for that account |
 | `... no roles are granted to you on this account` | No assignment in Identity Center | Ask your admin |
 | `sso GetRoleCredentials failed (...)` | Role revoked, token expired, or throttled | Retry; `list_roles force_refresh=true`; log in again |
 | A role was just granted but is not used | Role list cached | `list_roles` with `force_refresh`, or `refresh_accounts` |
@@ -118,7 +117,7 @@ The same variable fixes `uv`/`pip` installs, which use `--system-certs` (older v
 
 | Message or symptom | Cause | Fix |
 |---|---|---|
-| `... failed (AccessDenied...)` or `UnauthorizedOperation` for some accounts | The role lacks permission (IAM is the only gate). The server already retried once with fresh roles | Use a role with the needed permission via `role=`, or accept it |
+| `... failed (AccessDenied...)` or `UnauthorizedOperation` for some accounts | The role lacks permission (IAM is the only gate). The server already retried once with fresh roles | Ask your admin for the permission, point the environment rule at a role that has it, or accept it |
 | `UnknownOperation`: `<service> has no operation named '<op>'` | Wrong casing or name | Use exact PascalCase from the AWS API reference (`DescribeInstances`, not `describe_instances`) |
 | `Parameter validation failed` (from botocore) | `params` do not match the operation's model | Check parameter names and types in the AWS docs |
 | `A region is required for every AWS call` | `region` empty | Provide one |

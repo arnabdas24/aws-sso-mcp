@@ -44,6 +44,8 @@ region = "us-east-1"  # region hosting org1's SSO/SSO-OIDC endpoint - NOT a quer
 # Environment rules classify accounts by name pattern and determine which
 # IAM role is assumed for each - deterministically, never chosen by the
 # model. First matching pattern wins; rules are tried in declaration order.
+# These rules are the ONLY role selector: there is no per-call override and no
+# default role, so an account that matches no environment is refused.
 [portals.org1.environments.prod]
 match = "endswith"                 # exact | startswith | endswith | contains | regex
 patterns = ["-prod", "-production"]

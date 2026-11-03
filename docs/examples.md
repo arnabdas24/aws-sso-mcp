@@ -19,7 +19,7 @@ Account ids here are placeholders. Replace them with your own.
 - [8. Searching every org's directory](#8-searching-every-orgs-directory)
 - [9. Passing AWS filters and pagination limits](#9-passing-aws-filters-and-pagination-limits)
 - [10. Multi-step: a DAG](#10-multi-step-a-dag)
-- [11. Forcing a specific role](#11-forcing-a-specific-role)
+- [11. Asking for a different role](#11-asking-for-a-different-role)
 - [12. Making a change](#12-making-a-change)
 - [13. Reading a partial failure](#13-reading-a-partial-failure)
 - [14. Diagnostics](#14-diagnostics)
@@ -118,8 +118,8 @@ Do this before a wide or mutating run. It makes no AWS service call.
 }
 ```
 
-`source` tells you *why*: an explicit override you named, an `environment` rule from your TOML, or
-the sole role granted on the account.
+`source` is always `environment`: your TOML rules are the only thing that picks a role. An account that
+matches no rule comes back with `"resolved": false`, a `reason`, and the roles you hold.
 
 ## 4. One account, one call
 
@@ -330,25 +330,16 @@ If the plan comes back malformed you get `dag_error`. Ask to see it first:
 
 > *Show me the DAG you would run, but do not run it yet.*
 
-## 11. Forcing a specific role
+## 11. Asking for a different role
 
 **You say:** *Using the SecurityAudit role, list IAM users in every prod account.*
 
-```json
-{
-  "tool": "aws_query",
-  "arguments": {
-    "service": "iam",
-    "operation": "ListUsers",
-    "region": "us-east-1",
-    "environment": "prod",
-    "role": "SecurityAudit"
-  }
-}
-```
+The tools have **no `role` argument**, so this wording cannot change anything. The query runs with
+whatever role your TOML rules pick for each account, and the `role` field in every result shows which one
+was used. If a client sends a `role` anyway, it is ignored.
 
-`role` overrides the TOML rules, but it cannot invent access: the role must actually be granted to
-you on every selected account, or those accounts come back as errors.
+To use a different role, change the environment rule in your config and restart the server. The role must
+already be granted to you. See [configuration.md](configuration.md#how-a-role-is-chosen).
 
 ## 12. Making a change
 

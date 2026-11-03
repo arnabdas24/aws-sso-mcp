@@ -75,8 +75,6 @@ class AccountSelector:
             classify under this name.
         exclude_account_ids: Drop these accounts even if they matched.
         exclude_account_names: Drop these accounts even if they matched.
-        role: Override deterministic role resolution with a specific role name.
-            The role must actually be granted on each account.
     """
 
     org: str | None = None
@@ -89,7 +87,6 @@ class AccountSelector:
     environment: str | None = None
     exclude_account_ids: list[str] | None = None
     exclude_account_names: list[str] | None = None
-    role: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,7 +333,6 @@ class _FanOut:
             account_id=account_id,
             account_name=account_name,
             granted_roles=granted,
-            explicit_role=self._selector.role,
         )
         session = self._state.broker.get_session(
             org=org,

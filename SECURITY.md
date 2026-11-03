@@ -71,6 +71,7 @@ The controls a report should try to defeat:
 | Control | Where |
 | --- | --- |
 | IAM is the sole authorization gate; the server adds no allow/deny logic | `engine/catalog.py` |
+| The role is chosen only by the user's TOML rules; no model or caller override, no default role | `roles.py` |
 | Role credentials live in memory only and are never written to disk | `sso/broker.py` |
 | SSO token cache is created `0600` and replaced atomically | `sso/device_auth.py` |
 | Tokens are refused once inside a 5-minute expiry margin | `sso/device_auth.py` |
