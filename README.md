@@ -88,6 +88,8 @@ The full, step-by-step explanation (with code references) is in
 
 You need Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
 
+**For the full walkthrough, see [docs/setup-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/setup-guide.md).**
+
 **1. Install**
 
 ```bash
