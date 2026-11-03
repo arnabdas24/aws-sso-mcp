@@ -288,8 +288,19 @@ Edit the config file for your OS:
 Restart Claude Desktop completely (quit, do not just close the window). The tools appear behind the
 connector/tools icon in the message box.
 
-> On Windows, if Claude Desktop cannot find the command, give the absolute path, for example
-> `"command": "C:\\Users\\you\\.local\\bin\\aws-sso-mcp.exe"`. Backslashes must be doubled in JSON.
+> **If the client cannot find the command, give its absolute path.** This is the most common
+> setup failure, and it is not a problem with your install - a desktop app launched from Finder,
+> the Dock or the Start menu does not inherit the `PATH` from your shell, so a command that works
+> perfectly in a terminal is invisible to the client.
+>
+> Run `which aws-sso-mcp` (macOS/Linux) or `where aws-sso-mcp` (Windows) and paste the result:
+>
+> | OS | Example |
+> |---|---|
+> | macOS / Linux | `"command": "/Users/you/.local/bin/aws-sso-mcp"` |
+> | Windows | `"command": "C:\\Users\\you\\.local\\bin\\aws-sso-mcp.exe"` |
+>
+> Backslashes must be doubled in JSON. The same fix applies to Cursor and Windsurf.
 
 ### Claude Code (CLI)
 
