@@ -68,17 +68,16 @@ This server removes that grind:
 
 ## How it works in 30 seconds
 
-```text
-You --plain English--> Chat assistant (Copilot / Claude)
-                          |  MCP tool call over stdio
-                          v
-                     aws-sso-mcp
-        1. OIDC device login ------------> AWS IAM Identity Center
-        2. short-lived role credentials <-- AWS IAM Identity Center
-        3. the actual API call, per account, in parallel
-                          |------------> AWS accounts (EC2, S3, IAM ...)
-                          v
-        merged, redacted result --> Chat assistant --> answer to you
+```mermaid
+flowchart TD
+    You([You]) -->|1. ask in plain English| Chat[Chat assistant<br/>Copilot, Claude, ...]
+    Chat -->|2. MCP tool call over stdio| MCP[aws-sso-mcp]
+    MCP -->|3. sign in once, device login| IDC[AWS IAM Identity Center]
+    IDC -->|4. short-lived role keys<br/>kept in memory only| MCP
+    MCP -->|5. API calls, in parallel| ACC[Your AWS accounts<br/>EC2, S3, IAM ...]
+    ACC -->|one reply per account| MCP
+    MCP -->|6. merged, redacted result| Chat
+    Chat -->|7. answer in plain English| You
 ```
 
 The full, step-by-step explanation (with code references) is in
@@ -88,6 +87,8 @@ The full, step-by-step explanation (with code references) is in
 ## Quick start
 
 You need Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
+
+**For the full walkthrough, see [docs/setup-guide.md](https://github.com/arnabdas24/aws-sso-mcp/blob/main/docs/setup-guide.md).**
 
 **1. Install**
 
@@ -148,6 +149,20 @@ To see the exact tool call behind each sentence, read [docs/examples.md](https:/
 ## Safety model
 
 Read this before pointing the server at real accounts.
+
+> **Good to know: it works with exactly the permissions you have.**
+>
+> The server signs in through IAM Identity Center and inherits the permission set of the role you
+> choose. It can see and do what that role allows in IAM, no more and no less, and IAM is the only
+> gate. That is what keeps it simple and predictable. A few habits make it even safer:
+>
+> - **Pick a read-only role.** `ViewOnlyAccess`, `ReadOnlyAccess` or a custom least-privilege set
+>   is ideal for everyday questions, and is all most people need.
+> - **Know what the role can read.** Read-only roles may still reach some sensitive data, such as
+>   S3 objects or Lambda environment variables. Output is redacted on a best-effort basis.
+> - **Treat AWS text as untrusted.** Tags, names and log lines can contain odd instructions, so
+>   skim results before acting on them.
+> - **Glance at wide requests.** The server asks you to confirm large selections.
 
 | Property | What it means |
 |---|---|
