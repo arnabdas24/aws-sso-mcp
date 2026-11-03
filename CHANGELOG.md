@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.0](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.1.1...v0.2.0) (2026-11-03)
+
+
+### ⚠ BREAKING CHANGES
+
+* **roles:** accounts that relied on role= or on being the only granted role must now match an [environments] rule in the config.
+
+### Features
+
+* **roles:** make the TOML rules the only role selector ([#9](https://github.com/arnabdas24/aws-sso-mcp/issues/9)) ([867ff17](https://github.com/arnabdas24/aws-sso-mcp/commit/867ff1764d6b3a40bb5c6ec8dae4c4bfbb54f387))
+
+
+### Documentation
+
+* cover the macOS PATH failure and de-duplicate two tables ([#11](https://github.com/arnabdas24/aws-sso-mcp/issues/11)) ([26f0fdd](https://github.com/arnabdas24/aws-sso-mcp/commit/26f0fdd660b207db34a3763540bf761a0b8b6c56))
+
 ## [0.1.1](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.1.0...v0.1.1) (2026-11-03)
 
 
