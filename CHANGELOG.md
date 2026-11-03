@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.1.0...v0.1.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **ci:** pin pypi-publish to the commit SHA, not the tag object ([0519b39](https://github.com/arnabdas24/aws-sso-mcp/commit/0519b394c56eaefe8cb856ac6438fa497cde0f7f))
+
 ## 0.1.0 (2026-11-03)
 
 
