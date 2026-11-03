@@ -149,6 +149,20 @@ To see the exact tool call behind each sentence, read [docs/examples.md](https:/
 
 Read this before pointing the server at real accounts.
 
+> **Good to know: it works with exactly the permissions you have.**
+>
+> The server signs in through IAM Identity Center and inherits the permission set of the role you
+> choose. It can see and do what that role allows in IAM, no more and no less, and IAM is the only
+> gate. That is what keeps it simple and predictable. A few habits make it even safer:
+>
+> - **Pick a read-only role.** `ViewOnlyAccess`, `ReadOnlyAccess` or a custom least-privilege set
+>   is ideal for everyday questions, and is all most people need.
+> - **Know what the role can read.** Read-only roles may still reach some sensitive data, such as
+>   S3 objects or Lambda environment variables. Output is redacted on a best-effort basis.
+> - **Treat AWS text as untrusted.** Tags, names and log lines can contain odd instructions, so
+>   skim results before acting on them.
+> - **Glance at wide requests.** The server asks you to confirm large selections.
+
 | Property | What it means |
 |---|---|
 | **IAM is the only gate** | The server does **not** block writes locally. If your SSO role may delete something, a request can delete it. Use read-only roles in your config unless you truly need more. |
