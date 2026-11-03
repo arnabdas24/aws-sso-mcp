@@ -69,16 +69,22 @@ This server removes that grind:
 ## How it works in 30 seconds
 
 ```text
-You --plain English--> Chat assistant (Copilot / Claude)
-                          |  MCP tool call over stdio
-                          v
-                     aws-sso-mcp
-        1. OIDC device login ------------> AWS IAM Identity Center
-        2. short-lived role credentials <-- AWS IAM Identity Center
-        3. the actual API call, per account, in parallel
-                          |------------> AWS accounts (EC2, S3, IAM ...)
-                          v
-        merged, redacted result --> Chat assistant --> answer to you
+  You
+   |  1. ask in plain English
+   v
+  Chat assistant (Copilot, Claude, ...)
+   |  2. MCP tool call over stdio
+   v
+  aws-sso-mcp
+   |  3. sign in once (device login)  ----->  AWS IAM Identity Center
+   |  4. short-lived role keys        <-----  (kept in memory only)
+   |  5. API calls, in parallel       ----->  Your AWS accounts (EC2, S3, IAM ...)
+   |  6. merge results, redact secrets <-----  one reply per account
+   v
+  Chat assistant
+   |  7. answer in plain English
+   v
+  You
 ```
 
 The full, step-by-step explanation (with code references) is in
