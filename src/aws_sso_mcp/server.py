@@ -26,7 +26,7 @@ from mcp.server.mcpserver import MCPServer
 from mcp.server.mcpserver.context import Context
 
 from . import __version__
-from .config import PortalConfig, load_config
+from .config import Config, PortalConfig, config_is_writable, load_config
 from .engine.catalog import execute_call
 from .engine.dag import DagError, Step
 from .engine.dag import run_dag as execute_dag
@@ -52,6 +52,15 @@ _state: AppState | None = None
 _state_lock = threading.Lock()
 
 
+def _warn_if_config_writable(cfg: Config) -> None:
+    if config_is_writable(cfg.source_path):
+        logger.warning(
+            "Config file %s is writable by this user. Its rules are the only limit on which "
+            "roles are used; make it read-only so nothing running as you can widen them.",
+            cfg.source_path,
+        )
+
+
 def _get_state() -> AppState:
     """Return the process-wide :class:`AppState`, building it on first use.
 
@@ -69,6 +78,7 @@ def _get_state() -> AppState:
         if _state is None:
             cfg = load_config()
             configure_logging(cfg.log_level)
+            _warn_if_config_writable(cfg)
             logger.info(
                 "aws-sso-mcp starting: orgs=%s default=%s cache_ttl=%.1fh",
                 sorted(cfg.portals),

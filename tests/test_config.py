@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from aws_sso_mcp.config import load_config
+from aws_sso_mcp.config import config_is_writable, load_config
 from aws_sso_mcp.errors import ConfigError
 
 
@@ -21,6 +21,15 @@ def test_load_valid_config(sample_config_path: Path) -> None:
     env = cfg.portals["org1"].environments["dev"]
     assert env.roles == ("DevRole",)
     assert env.fallback == ("ReadOnly",)
+
+
+def test_config_is_writable_reflects_read_only(sample_config_path: Path) -> None:
+    assert config_is_writable(sample_config_path)
+    sample_config_path.chmod(0o444)
+    try:
+        assert not config_is_writable(sample_config_path)
+    finally:
+        sample_config_path.chmod(0o644)
 
 
 def test_missing_file_raises(tmp_path: Path) -> None:

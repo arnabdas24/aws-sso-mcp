@@ -7,8 +7,11 @@ needed. All AWS access goes through Stubber; nothing touches live AWS.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+
+import pytest
 
 from aws_sso_mcp import fanout
 from aws_sso_mcp import server as server_module
@@ -20,6 +23,28 @@ def _fresh_state(sample_config_path: Path) -> AppState:
     state = AppState.build(load_config(sample_config_path))
     server_module._state = state
     return state
+
+
+def test_writable_config_logs_a_warning(
+    sample_config_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cfg = load_config(sample_config_path)
+    with caplog.at_level(logging.WARNING, logger=server_module.logger.name):
+        server_module._warn_if_config_writable(cfg)
+    assert "writable" in caplog.text
+
+
+def test_read_only_config_logs_no_warning(
+    sample_config_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    cfg = load_config(sample_config_path)
+    sample_config_path.chmod(0o444)
+    try:
+        with caplog.at_level(logging.WARNING, logger=server_module.logger.name):
+            server_module._warn_if_config_writable(cfg)
+    finally:
+        sample_config_path.chmod(0o644)
+    assert caplog.text == ""
 
 
 def test_orgs_list(sample_config_path: Path, isolated_env: Path) -> None:

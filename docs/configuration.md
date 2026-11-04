@@ -10,6 +10,7 @@ Loader: `load_config()` in [config.py](../src/aws_sso_mcp/config.py). A fully co
 - [Top-level keys](#top-level-keys)
 - [Portals (orgs)](#portals-orgs)
 - [Environments and role rules](#environments-and-role-rules)
+- [Protecting the config file](#protecting-the-config-file)
 - [Performance tuning](#performance-tuning)
 - [Validation rules](#validation-rules)
 - [Recipes](#recipes)
@@ -106,6 +107,22 @@ granted role named `Custom-ReadOnlyAccess`. Use `exact` if that matters.
 
 **Order matters.** Put specific environments before general ones, for example `prod` before a broad
 `contains` rule.
+
+## Protecting the config file
+
+The rules are your only limit, so whoever can edit this file can widen it. The server never writes it and
+reads it **once at startup**, so an edit made mid-session changes nothing until the server restarts.
+The remaining risk is a file-edit tool in your AI client (or any program running as you) rewriting it
+before the next restart. Close that at the OS level by making the file read-only:
+
+| OS | Command |
+|---|---|
+| macOS / Linux | `chmod 444 ~/.config/aws-sso-mcp/config.toml` (or keep it root-owned) |
+| Windows | `attrib +R "%USERPROFILE%\.config\aws-sso-mcp\config.toml"`, or an `icacls` deny-write for your user |
+
+To change the rules, make the file writable, edit it yourself, lock it again, and restart the server.
+If the file is writable at startup the server logs a warning to stderr. On Windows that check sees only
+the read-only attribute, not ACLs. Read-only is a guardrail, not a boundary: the owner can always undo it.
 
 ## Performance tuning
 
