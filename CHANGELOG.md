@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.3.0](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.2.0...v0.3.0) (2026-11-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* new releases are licensed under Apache-2.0 instead of MIT.
+
+### Features
+
+* **config:** warn at startup when the config file is writable ([#13](https://github.com/arnabdas24/aws-sso-mcp/issues/13)) ([ce4c680](https://github.com/arnabdas24/aws-sso-mcp/commit/ce4c680ad9d95773a4a0855d03bff408f2208cf7))
+
+
+### Bug Fixes
+
+* **ci:** tolerate an empty release-please pr output ([#14](https://github.com/arnabdas24/aws-sso-mcp/issues/14)) ([a13a929](https://github.com/arnabdas24/aws-sso-mcp/commit/a13a929809b2c49d030a11c23a006c451457a286))
+
+
+### Chores
+
+* relicense future releases under Apache-2.0 ([#15](https://github.com/arnabdas24/aws-sso-mcp/issues/15)) ([5b203c6](https://github.com/arnabdas24/aws-sso-mcp/commit/5b203c65306eb3f8df8a4fb02ba0a55d528d2619))
+
 ## [0.2.0](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.1.1...v0.2.0) (2026-11-03)
 
 
