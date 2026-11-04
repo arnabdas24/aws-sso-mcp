@@ -44,6 +44,31 @@ def test_is_read_operation(operation: str, expected: bool) -> None:
     assert catalog.is_read_operation(operation) is expected
 
 
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        ("DeleteBucket", True),
+        ("TerminateInstances", True),
+        ("RemoveTagsFromResource", True),
+        ("DetachVolume", True),
+        ("DisassociateAddress", True),
+        ("DeregisterImage", True),
+        ("RevokeSecurityGroupIngress", True),
+        ("ReleaseAddress", True),
+        ("BatchDeleteImage", True),
+        ("ScheduleKeyDeletion", True),
+        ("DescribeInstances", False),
+        ("ListBuckets", False),
+        ("CreateBucket", False),
+        ("PutObject", False),
+        ("StopInstances", False),
+        ("BatchGetItem", False),
+    ],
+)
+def test_is_destructive_operation(operation: str, expected: bool) -> None:
+    assert catalog.is_destructive_operation(operation) is expected
+
+
 def test_execute_call_requires_region() -> None:
     with pytest.raises(RegionError):
         catalog.execute_call(

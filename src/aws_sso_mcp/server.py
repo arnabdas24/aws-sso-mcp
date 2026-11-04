@@ -27,6 +27,7 @@ from mcp.server.mcpserver.context import Context
 
 from . import __version__
 from .config import Config, PortalConfig, config_is_writable, load_config
+from .confirmation import make_confirmer
 from .engine.catalog import execute_call
 from .engine.dag import DagError, Step
 from .engine.dag import run_dag as execute_dag
@@ -43,7 +44,17 @@ from .state import AppState
 
 logger = get_logger(__name__)
 
-app = MCPServer("aws-sso-mcp")
+# Sent to the client at connect time so the model sees these rules up front.
+_INSTRUCTIONS = (
+    "Never assume. If you lack a value the user did not give you (an account, region, org, "
+    "resource id or parameter), ask for it. If you do not have some information, say so "
+    "plainly instead of guessing or inventing it. "
+    "Calls that delete, terminate or detach resources make the server ask the user to confirm. "
+    "If the user declines, or the client cannot ask, the call is not run: report that and do "
+    "not retry it, rephrase it, or look for another way to do the same thing."
+)
+
+app = MCPServer("aws-sso-mcp", instructions=_INSTRUCTIONS)
 
 # The server runs as one process per client session, so a module-level
 # singleton is the correctly-scoped place for runtime state: it is created on
@@ -487,6 +498,11 @@ def aws_query(
     deletes, secret reads, all of it - with AWS IAM as the sole authorization
     boundary. Nothing is refused locally; if the role lacks permission, AWS
     returns AccessDenied and that is what comes back.
+
+    Operations that delete, terminate or detach something (``Delete*``,
+    ``Terminate*``, ``Remove*``, ``Detach*`` and similar) first ask the user to
+    confirm, listing the accounts and parameters. If they decline, or the client
+    cannot ask, nothing runs. Do not retry a declined call.
     """
 
     def _run() -> dict[str, Any]:
@@ -532,6 +548,7 @@ def aws_query(
             ctx=ctx,
             max_accounts=max_accounts,
             max_items=max_items,
+            confirm=make_confirmer(ctx, region=region, calls=[(service, operation, call_params)]),
         )
 
     return _safe(_run, ctx)
@@ -603,6 +620,8 @@ def run_dag(
     one credential mint per account rather than one per step. As with
     ``aws_query``, AWS IAM is the sole authorization boundary for every step,
     and ``max_items`` raises the per-account pagination ceiling for every step.
+    If any step deletes, terminates or detaches something, the user is asked to
+    confirm the whole DAG first; if they decline, nothing runs.
     """
 
     def _run() -> dict[str, Any]:
@@ -657,6 +676,11 @@ def run_dag(
             ctx=ctx,
             max_accounts=max_accounts,
             max_items=max_items,
+            confirm=make_confirmer(
+                ctx,
+                region=region,
+                calls=[(s.service, s.operation, s.params) for s in parsed_steps],
+            ),
         )
 
     return _safe(_run, ctx)

@@ -30,7 +30,7 @@ The pipeline, in order
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -647,6 +647,7 @@ def run_fanout(
     ctx: Any = None,
     max_accounts: int | None = None,
     max_items: int | None = None,
+    confirm: Callable[[Sequence[ResolvedTarget]], None] | None = None,
 ) -> dict[str, Any]:
     """Run ``per_account`` against every account the selector resolves to.
 
@@ -666,6 +667,9 @@ def run_fanout(
         max_accounts: Override the configured blast-radius cap.
         max_items: Override the configured per-account pagination ceiling.
             ``None`` uses ``performance.max_items_per_account``.
+        confirm: Called with the resolved accounts before anything runs; it
+            raises to stop the fan-out (see ``confirmation.make_confirmer``).
+            Skipped when no account matched, since nothing would be touched.
 
     Returns:
         A uniform response: ``target_count``, ``ok_count``, ``failed_count``,
@@ -673,7 +677,8 @@ def run_fanout(
         name. If no account matched, a ``warning`` explains that instead.
 
     Raises:
-        McpError: If the selection exceeds the blast-radius cap.
+        McpError: If the selection exceeds the blast-radius cap, or ``confirm``
+            refuses.
         NoTokenError: If any org in scope needs an interactive sign-in first.
     """
     # Token check first: planning refreshes account directories, which needs a
@@ -690,6 +695,10 @@ def run_fanout(
             "results": [],
             "warning": "No accounts matched the given selectors.",
         }
+
+    # After planning so the user sees the exact accounts, before any credential is minted.
+    if confirm is not None:
+        confirm(targets)
 
     fan = _FanOut(
         state,

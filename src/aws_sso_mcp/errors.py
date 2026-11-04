@@ -66,6 +66,10 @@ class RoleResolutionError(McpError):
         self.available = available
 
 
+class ConfirmationError(McpError):
+    """Raised when a destructive operation was not confirmed by the user, so nothing was run."""
+
+
 class RegionError(McpError):
     """Raised for a missing, unknown, or unresolvable region."""
 

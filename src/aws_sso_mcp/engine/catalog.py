@@ -15,8 +15,10 @@ the outcome. This module never refuses a call that AWS itself would allow; if
 the role lacks permission, AWS returns AccessDenied and that error is surfaced
 verbatim (minus transport noise) to the caller.
 
-The read-classification helper :func:`is_read_operation` does not gate anything.
-It exists purely to *label* each call read-vs-write in the audit log.
+The classification helpers :func:`is_read_operation` and
+:func:`is_destructive_operation` do not authorize anything. The first *labels*
+each call read-vs-write in the audit log; the second tells the caller when to
+ask the user for consent first (see ``confirmation.py``). Neither refuses a call.
 
 Pagination
 ----------
@@ -81,6 +83,42 @@ def is_read_operation(operation: str) -> bool:
         audit-log entries, never to allow or deny a call.
     """
     return operation.startswith(_READ_PREFIXES) or operation in _READ_OPERATION_ALLOWLIST
+
+
+# Verbs for operations that delete, terminate or detach something. A name that
+# is not listed simply gets no prompt, so extend this list rather than guess.
+# Stop/Reboot/Disable are disruptive but reversible, so they are not included.
+_DESTRUCTIVE_PREFIXES = (
+    "Delete",
+    "Terminate",
+    "Remove",
+    "Detach",
+    "Disassociate",
+    "Deregister",
+    "Revoke",
+    "Purge",
+    "Destroy",
+    "Release",
+)
+
+# Destructive operations whose names do not start with a destructive verb.
+_DESTRUCTIVE_OPERATION_ALLOWLIST = frozenset({"ScheduleKeyDeletion"})
+
+
+def is_destructive_operation(operation: str) -> bool:
+    """Return ``True`` if ``operation`` deletes, terminates or detaches something.
+
+    A leading ``Batch`` is ignored so ``BatchDeleteImage`` counts as a delete.
+
+    Args:
+        operation: A PascalCase operation name, e.g. ``"TerminateInstances"``.
+
+    Returns:
+        ``True`` when the user should be asked before the call runs. Used only
+        to decide whether to ask, never to allow or deny a call.
+    """
+    verb = operation.removeprefix("Batch")
+    return verb.startswith(_DESTRUCTIVE_PREFIXES) or operation in _DESTRUCTIVE_OPERATION_ALLOWLIST
 
 
 def _raise_clean_error(service: str, operation: str, exc: Exception) -> AwsCallError:

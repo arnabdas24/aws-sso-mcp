@@ -304,7 +304,10 @@ knowing as a user:
 3. **Errors are cleaned up.** AWS failures come back as a readable
    `service:operation failed (Code): message`, never a raw SDK dump.
 
-Importantly: **nothing is refused locally.** Reads and writes are both sent. IAM alone decides.
+Importantly: **nothing is refused on policy grounds.** IAM alone decides what is allowed. The one extra
+step is consent: destructive operations (`Delete*`, `Terminate*`, `Remove*`, ...) first ask *you* to
+confirm, through your client, and nothing runs if you decline or the client cannot ask
+([ADR 0008](adr/0008-confirm-destructive-operations.md)).
 `is_read_operation()` only *labels* calls as read or write for the audit log.
 
 For client caching, operation-name translation and the rest, see

@@ -117,6 +117,7 @@ The same variable fixes `uv`/`pip` installs, which use `--system-certs` (older v
 
 | Message or symptom | Cause | Fix |
 |---|---|---|
+| `needs your confirmation, but this client cannot ask` or `was not confirmed` | A destructive operation needs a human yes, and the client has no elicitation support or you declined | Use a client that supports MCP elicitation, or run the operation outside this server (ADR 0008) |
 | `... failed (AccessDenied...)` or `UnauthorizedOperation` for some accounts | The role lacks permission (IAM is the only gate). The server already retried once with fresh roles | Ask your admin for the permission, point the environment rule at a role that has it, or accept it |
 | `UnknownOperation`: `<service> has no operation named '<op>'` | Wrong casing or name | Use exact PascalCase from the AWS API reference (`DescribeInstances`, not `describe_instances`) |
 | `Parameter validation failed` (from botocore) | `params` do not match the operation's model | Check parameter names and types in the AWS docs |

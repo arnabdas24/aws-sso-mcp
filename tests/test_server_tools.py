@@ -294,11 +294,8 @@ def test_aws_query_dispatches_secret_read_without_local_gate(
     assert result["results"][0]["ok"] is True
 
 
-def test_aws_query_multi_account_write_needs_no_confirmation(
-    sample_config_path: Path, isolated_env: Path, monkeypatch
-) -> None:
-    """A mutating call spanning many accounts is dispatched; IAM is the only boundary."""
-    state = _fresh_state(sample_config_path)
+def _stub_two_dev_accounts(state: AppState, monkeypatch: pytest.MonkeyPatch) -> list[dict]:
+    """Seed two reachable dev accounts and return the list that records dispatched AWS calls."""
     _seed_token(state, "org1")
     monkeypatch.setattr(
         "aws_sso_mcp.cache.accounts.list_accounts",
@@ -312,10 +309,21 @@ def test_aws_query_multi_account_write_needs_no_confirmation(
         lambda region, token, account_id: ["DevRole"],
     )
     monkeypatch.setattr(state.broker, "get_session", lambda **kwargs: object())
-    monkeypatch.setattr(
-        "aws_sso_mcp.server.execute_call",
-        lambda **kwargs: {"TerminatingInstances": [{"InstanceId": "i-123"}]},
-    )
+    dispatched: list[dict] = []
+
+    def _fake_execute_call(**kwargs: object) -> dict:
+        dispatched.append(kwargs)
+        return {"TerminatingInstances": [{"InstanceId": "i-123"}]}
+
+    monkeypatch.setattr("aws_sso_mcp.server.execute_call", _fake_execute_call)
+    return dispatched
+
+
+def test_aws_query_destructive_call_is_refused_when_nobody_can_confirm(
+    sample_config_path: Path, isolated_env: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = _fresh_state(sample_config_path)
+    dispatched = _stub_two_dev_accounts(state, monkeypatch)
 
     result = server_module.aws_query(
         service="ec2",
@@ -324,8 +332,64 @@ def test_aws_query_multi_account_write_needs_no_confirmation(
         params={"InstanceIds": ["i-123"]},
         org="org1",
     )
+
+    assert "needs your confirmation" in result["error"]
+    assert dispatched == []
+
+
+def test_aws_query_destructive_call_runs_after_the_user_confirms(
+    sample_config_path: Path,
+    isolated_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_ctx,
+    in_worker_thread,
+) -> None:
+    state = _fresh_state(sample_config_path)
+    dispatched = _stub_two_dev_accounts(state, monkeypatch)
+    ctx = make_ctx()
+
+    result = in_worker_thread(
+        server_module.aws_query,
+        service="ec2",
+        operation="TerminateInstances",
+        region="us-east-1",
+        params={"InstanceIds": ["i-123"]},
+        org="org1",
+        ctx=ctx,
+    )
+
     assert result["target_count"] == 2
     assert result["ok_count"] == 2
+    assert len(dispatched) == 2
+    assert "acct-a-dev" in ctx.messages[0]
+    assert "acct-b-dev" in ctx.messages[0]
+
+
+def test_run_dag_with_a_destructive_step_runs_nothing_when_declined(
+    sample_config_path: Path,
+    isolated_env: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    make_ctx,
+    in_worker_thread,
+) -> None:
+    state = _fresh_state(sample_config_path)
+    dispatched = _stub_two_dev_accounts(state, monkeypatch)
+    ctx = make_ctx(action="decline")
+
+    result = in_worker_thread(
+        server_module.run_dag,
+        steps=[
+            {"id": "list", "service": "s3", "operation": "ListBuckets"},
+            {"id": "drop", "service": "s3", "operation": "DeleteBucket", "params": {"Bucket": "b"}},
+        ],
+        region="us-east-1",
+        org="org1",
+        ctx=ctx,
+    )
+
+    assert "was not confirmed" in result["error"]
+    assert dispatched == []
+    assert "s3:DeleteBucket" in ctx.messages[0]
 
 
 def test_aws_query_success_across_targets(

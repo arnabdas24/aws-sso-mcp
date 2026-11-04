@@ -2,10 +2,65 @@
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import anyio
 import pytest
+
+
+class FakeCtx:
+    """Stand-in for the MCP Context that records confirmation prompts and answers them."""
+
+    def __init__(
+        self,
+        *,
+        action: str = "accept",
+        confirm: bool = True,
+        can_elicit: bool = True,
+        error: Exception | None = None,
+    ) -> None:
+        self.messages: list[str] = []
+        self.client_capabilities = SimpleNamespace(elicitation=object() if can_elicit else None)
+        self._action = action
+        self._confirm = confirm
+        self._error = error
+
+    async def elicit(self, message: str, schema: Any) -> SimpleNamespace:
+        self.messages.append(message)
+        if self._error is not None:
+            raise self._error
+        data = schema(confirm=self._confirm) if self._action == "accept" else None
+        return SimpleNamespace(action=self._action, data=data)
+
+    async def report_progress(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    async def debug(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+    info = warning = error = debug
+
+
+@pytest.fixture
+def make_ctx() -> type[FakeCtx]:
+    return FakeCtx
+
+
+@pytest.fixture
+def in_worker_thread() -> Callable[..., Any]:
+    """Run a sync callable the way MCP runs a tool: on an anyio worker thread."""
+
+    def _run(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        async def _main() -> Any:
+            return await anyio.to_thread.run_sync(functools.partial(fn, *args, **kwargs))
+
+        return anyio.run(_main)
+
+    return _run
 
 
 @pytest.fixture(autouse=True)

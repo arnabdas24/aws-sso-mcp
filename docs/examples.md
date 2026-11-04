@@ -343,8 +343,9 @@ already be granted to you. See [configuration.md](configuration.md#how-a-role-is
 
 ## 12. Making a change
 
-There is no local allow-list. Anything your role permits is dispatched - **IAM is the only gate**.
-Be deliberate.
+There is no local allow-list - **IAM is the only gate**. Destructive operations (`Delete*`, `Terminate*`,
+`Remove*`, ...) additionally ask you to confirm in your client first; other changes such as stopping an
+instance are sent without a prompt. Be deliberate.
 
 **You say:** *Stop instance i-0abc123 in us-east-1 in account payments-dev.*
 
