@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.3.0...v0.4.0) (2026-11-04)
+
+
+### Features
+
+* confirm risky AWS operations with a risk-specific warning ([#17](https://github.com/arnabdas24/aws-sso-mcp/issues/17)) ([2a48005](https://github.com/arnabdas24/aws-sso-mcp/commit/2a480053369f626754fba4513424d7be1685ceb9))
+
 ## [0.3.0](https://github.com/arnabdas24/aws-sso-mcp/compare/v0.2.0...v0.3.0) (2026-11-04)
 
 
