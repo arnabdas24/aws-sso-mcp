@@ -243,4 +243,4 @@ suite with its global and per-module coverage floors, and `vulture`.
 
 ## License
 
-[MIT](https://github.com/arnabdas24/aws-sso-mcp/blob/main/LICENSE)
+[Apache License 2.0](https://github.com/arnabdas24/aws-sso-mcp/blob/main/LICENSE). Releases up to and including 0.1.1 were published under the MIT License and remain available under it.

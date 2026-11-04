@@ -3,8 +3,8 @@ name = "aws-sso-mcp"
 version = "0.2.0"
 description = "Query multiple AWS accounts across orgs at once from your AI chat client, via IAM Identity Center SSO. Rule-based role selection, no long-lived keys."
 readme = "README.md"
-license = "MIT"
-license-files = ["LICENSE"]
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [
     { name = "Arnab Das", email = "arnabds991@gmail.com" }
 ]
