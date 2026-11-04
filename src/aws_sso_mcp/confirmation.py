@@ -1,7 +1,8 @@
-"""Ask the user to confirm destructive AWS operations before they run.
+"""Ask the user to confirm risky AWS operations before they run.
 
 IAM stays the only *authorization* gate. This module adds *consent*: when a call
-would delete, terminate or detach something, the server asks the human directly
+would delete, stop, change or create something (and so may be irreversible or incur
+cost), the server asks the human directly
 through the MCP client (elicitation) and runs nothing unless they accept. The
 model cannot answer for the user, pass a flag, or retry its way past a refusal.
 
@@ -18,7 +19,7 @@ from typing import Any
 from anyio import from_thread
 from pydantic import BaseModel, Field
 
-from .engine.catalog import is_destructive_operation
+from .engine.catalog import Risk, operation_risk
 from .errors import ConfirmationError
 from .planner import ResolvedTarget
 from .redact import redact
@@ -37,7 +38,7 @@ class _Confirmation(BaseModel):
 
     confirm: bool = Field(
         default=False,
-        description="Tick to run this destructive operation on the accounts listed above.",
+        description="Tick to run the operations listed above on those accounts.",
     )
 
 
@@ -57,6 +58,13 @@ def _describe_params(params: dict[str, Any]) -> str:
     return text[:_MAX_PARAMS_CHARS] + _TRUNCATION_SUFFIX
 
 
+_WARNINGS: dict[Risk, str] = {
+    "irreversible": "IRREVERSIBLE: permanently deletes or detaches resources. It cannot be undone.",
+    "change": "This changes or interrupts existing resources and may disrupt running services.",
+    "cost": "This may create billable resources and incur AWS charges.",
+}
+
+
 def _message(calls: Sequence[PlannedCall], region: str, targets: Sequence[ResolvedTarget]) -> str:
     accounts = ", ".join(
         redact(f"{t.account_name} ({t.account_id})") for t in targets[:_MAX_ACCOUNTS_SHOWN]
@@ -64,7 +72,7 @@ def _message(calls: Sequence[PlannedCall], region: str, targets: Sequence[Resolv
     if len(targets) > _MAX_ACCOUNTS_SHOWN:
         accounts += f", and {len(targets) - _MAX_ACCOUNTS_SHOWN} more"
     lines = [
-        "A destructive AWS operation was requested. Nothing has run yet.",
+        "An AWS operation that needs your confirmation was requested. Nothing has run yet.",
         "",
         f"Region: {region}",
         f"Accounts ({len(targets)}): {accounts}",
@@ -76,14 +84,17 @@ def _message(calls: Sequence[PlannedCall], region: str, targets: Sequence[Resolv
     ]
     if len(calls) > _MAX_CALLS_SHOWN:
         lines.append(f"  ...and {len(calls) - _MAX_CALLS_SHOWN} more")
-    lines += ["", "This can permanently remove resources. Run it?"]
+    risks = {risk for _, operation, _ in calls if (risk := operation_risk(operation))}
+    lines += [""]
+    lines += [f"WARNING - {_WARNINGS[risk]}" for risk in _WARNINGS if risk in risks]
+    lines += ["", "Run it?"]
     return "\n".join(lines)
 
 
 def make_confirmer(
     ctx: Any, *, region: str, calls: Sequence[PlannedCall]
 ) -> Callable[[Sequence[ResolvedTarget]], None] | None:
-    """Build the check that asks the user before ``calls`` run, if any are destructive.
+    """Build the check that asks the user before ``calls`` run, if any need it.
 
     Args:
         ctx: The MCP ``Context`` for the in-flight tool call, or ``None``.
@@ -91,11 +102,11 @@ def make_confirmer(
         calls: Every call the tool is about to make, as ``(service, operation, params)``.
 
     Returns:
-        ``None`` when no call is destructive. Otherwise a function that takes the
+        ``None`` when no call needs confirmation. Otherwise a function that takes the
         resolved accounts, asks the user, and raises :class:`ConfirmationError`
         unless they accept. It must be called from a tool's worker thread.
     """
-    destructive = [call for call in calls if is_destructive_operation(call[1])]
+    destructive = [call for call in calls if operation_risk(call[1])]
     if not destructive:
         return None
 
@@ -104,7 +115,7 @@ def make_confirmer(
     def _confirm(targets: Sequence[ResolvedTarget]) -> None:
         if not _client_can_ask(ctx):
             raise ConfirmationError(
-                f"{names} is destructive and needs your confirmation, but this client cannot "
+                f"{names} needs your confirmation, but this client cannot "
                 "ask for one. Nothing was run. Use a client that supports MCP elicitation, or "
                 "make the change yourself."
             )

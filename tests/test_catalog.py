@@ -47,32 +47,32 @@ def test_is_read_operation(operation: str, expected: bool) -> None:
 @pytest.mark.parametrize(
     ("operation", "expected"),
     [
-        ("DeleteBucket", True),
-        ("TerminateInstances", True),
-        ("RemoveTagsFromResource", True),
-        ("DetachVolume", True),
-        ("DisassociateAddress", True),
-        ("DeregisterImage", True),
-        ("RevokeSecurityGroupIngress", True),
-        ("ReleaseAddress", True),
-        ("BatchDeleteImage", True),
-        ("ScheduleKeyDeletion", True),
-        ("DescribeInstances", False),
-        ("ListBuckets", False),
-        ("CreateBucket", False),
-        ("StopInstances", True),
-        ("RebootInstances", True),
-        ("PutObject", True),
-        ("UpdateFunctionCode", True),
-        ("DisableAlarmActions", True),
-        ("CancelSpotFleetRequests", True),
-        ("RunInstances", False),
-        ("StartInstances", False),
-        ("BatchGetItem", False),
+        ("DeleteBucket", "irreversible"),
+        ("TerminateInstances", "irreversible"),
+        ("RemoveTagsFromResource", "irreversible"),
+        ("DetachVolume", "irreversible"),
+        ("DisassociateAddress", "irreversible"),
+        ("DeregisterImage", "irreversible"),
+        ("RevokeSecurityGroupIngress", "irreversible"),
+        ("ReleaseAddress", "irreversible"),
+        ("BatchDeleteImage", "irreversible"),
+        ("ScheduleKeyDeletion", "irreversible"),
+        ("StopInstances", "change"),
+        ("RebootInstances", "change"),
+        ("PutObject", "change"),
+        ("UpdateFunctionCode", "change"),
+        ("DisableAlarmActions", "change"),
+        ("CancelSpotFleetRequests", "change"),
+        ("CreateBucket", "cost"),
+        ("RunInstances", "cost"),
+        ("StartInstances", "cost"),
+        ("DescribeInstances", None),
+        ("ListBuckets", None),
+        ("BatchGetItem", None),
     ],
 )
-def test_is_destructive_operation(operation: str, expected: bool) -> None:
-    assert catalog.is_destructive_operation(operation) is expected
+def test_operation_risk(operation: str, expected: str | None) -> None:
+    assert catalog.operation_risk(operation) == expected
 
 
 def test_execute_call_requires_region() -> None:

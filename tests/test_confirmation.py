@@ -1,4 +1,4 @@
-"""Tests for aws_sso_mcp.confirmation: consent before destructive calls."""
+"""Tests for aws_sso_mcp.confirmation: consent before risky calls."""
 
 from __future__ import annotations
 
@@ -46,6 +46,29 @@ def test_prompt_lists_only_the_destructive_calls(
 
     assert "s3:DeleteBucket" in ctx.messages[0]
     assert "DescribeVpcs" not in ctx.messages[0]
+
+
+@pytest.mark.parametrize(
+    ("operation", "warning"),
+    [
+        ("DeleteBucket", "IRREVERSIBLE"),
+        ("StopInstances", "interrupts"),
+        ("RunInstances", "incur AWS charges"),
+    ],
+)
+def test_prompt_warns_about_the_risk_of_the_operation(
+    make_ctx: Callable[..., Any],
+    in_worker_thread: Callable[..., Any],
+    operation: str,
+    warning: str,
+) -> None:
+    ctx = make_ctx()
+    confirm = make_confirmer(ctx, region="us-east-1", calls=[("ec2", operation, {})])
+    assert confirm is not None
+
+    in_worker_thread(confirm, TARGETS)
+
+    assert warning in ctx.messages[0]
 
 
 @pytest.mark.parametrize(

@@ -305,9 +305,9 @@ knowing as a user:
    `service:operation failed (Code): message`, never a raw SDK dump.
 
 Importantly: **nothing is refused on policy grounds.** IAM alone decides what is allowed. The one extra
-step is consent: destructive operations (`Delete*`, `Terminate*`, `Remove*`, ...) first ask *you* to
+step is consent: operations that delete, change or create things (`Delete*`, `Stop*`, `Create*`, ...) first ask *you* to
 confirm, through your client, and nothing runs if you decline or the client cannot ask
-([ADR 0008](adr/0008-confirm-destructive-operations.md)).
+([ADR 0008](adr/0008-confirm-risky-operations.md)).
 `is_read_operation()` only *labels* calls as read or write for the audit log.
 
 For client caching, operation-name translation and the rest, see

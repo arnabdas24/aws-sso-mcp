@@ -16,7 +16,7 @@ the role lacks permission, AWS returns AccessDenied and that error is surfaced
 verbatim (minus transport noise) to the caller.
 
 The classification helpers :func:`is_read_operation` and
-:func:`is_destructive_operation` do not authorize anything. The first *labels*
+:func:`operation_risk` do not authorize anything. The first *labels*
 each call read-vs-write in the audit log; the second tells the caller when to
 ask the user for consent first (see ``confirmation.py``). Neither refuses a call.
 
@@ -33,7 +33,7 @@ the response says so explicitly rather than quietly lying.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import boto3
 from botocore import xform_name
@@ -85,10 +85,9 @@ def is_read_operation(operation: str) -> bool:
     return operation.startswith(_READ_PREFIXES) or operation in _READ_OPERATION_ALLOWLIST
 
 
-# Verbs for operations that delete, stop, disable or change something. A name
-# that is not listed simply gets no prompt, so extend this list rather than guess.
-# Create*, Run* and Start* are not listed: they add things rather than change or remove them.
-_DESTRUCTIVE_PREFIXES = (
+# Verb prefixes that need the user's confirmation, grouped by what to warn about. A
+# name that is not listed simply gets no prompt, so extend these rather than guess.
+_IRREVERSIBLE_PREFIXES = (
     "Delete",
     "Terminate",
     "Remove",
@@ -99,6 +98,8 @@ _DESTRUCTIVE_PREFIXES = (
     "Purge",
     "Destroy",
     "Release",
+)
+_CHANGE_PREFIXES = (
     "Stop",
     "Reboot",
     "Disable",
@@ -109,13 +110,16 @@ _DESTRUCTIVE_PREFIXES = (
     "Reset",
     "Suspend",
 )
+_COST_PREFIXES = ("Create", "Run", "Start", "Launch", "Allocate")
 
-# Destructive operations whose names do not start with a destructive verb.
-_DESTRUCTIVE_OPERATION_ALLOWLIST = frozenset({"ScheduleKeyDeletion"})
+# Irreversible operations whose names do not start with an irreversible verb.
+_IRREVERSIBLE_OPERATION_ALLOWLIST = frozenset({"ScheduleKeyDeletion"})
+
+type Risk = Literal["irreversible", "change", "cost"]
 
 
-def is_destructive_operation(operation: str) -> bool:
-    """Return ``True`` if ``operation`` deletes, stops, disables or changes something.
+def operation_risk(operation: str) -> Risk | None:
+    """Classify what the user should be warned about before ``operation`` runs.
 
     A leading ``Batch`` is ignored so ``BatchDeleteImage`` counts as a delete.
 
@@ -123,11 +127,19 @@ def is_destructive_operation(operation: str) -> bool:
         operation: A PascalCase operation name, e.g. ``"TerminateInstances"``.
 
     Returns:
-        ``True`` when the user should be asked before the call runs. Used only
-        to decide whether to ask, never to allow or deny a call.
+        ``"irreversible"`` (deletes or detaches), ``"change"`` (stops, disables or
+        modifies), ``"cost"`` (creates or starts, so it may incur charges), or
+        ``None`` for everything else. Used only to decide whether to ask, never
+        to allow or deny a call.
     """
     verb = operation.removeprefix("Batch")
-    return verb.startswith(_DESTRUCTIVE_PREFIXES) or operation in _DESTRUCTIVE_OPERATION_ALLOWLIST
+    if verb.startswith(_IRREVERSIBLE_PREFIXES) or operation in _IRREVERSIBLE_OPERATION_ALLOWLIST:
+        return "irreversible"
+    if verb.startswith(_CHANGE_PREFIXES):
+        return "change"
+    if verb.startswith(_COST_PREFIXES):
+        return "cost"
+    return None
 
 
 def _raise_clean_error(service: str, operation: str, exc: Exception) -> AwsCallError:

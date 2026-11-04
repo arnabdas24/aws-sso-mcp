@@ -343,9 +343,9 @@ already be granted to you. See [configuration.md](configuration.md#how-a-role-is
 
 ## 12. Making a change
 
-There is no local allow-list - **IAM is the only gate**. Destructive and changing operations (`Delete*`,
-`Terminate*`, `Stop*`, `Reboot*`, `Update*`, `Put*`, ...) additionally ask you to confirm in your client
-first. Be deliberate.
+There is no local allow-list - **IAM is the only gate**. Operations that delete, change or create things (`Delete*`,
+`Stop*`, `Put*`, `Create*`, `Run*`, ...) additionally ask you to confirm in your client first, with a warning
+(irreversible, disruptive, or may incur cost). Be deliberate.
 
 **You say:** *Stop instance i-0abc123 in us-east-1 in account payments-dev.*
 
