@@ -72,8 +72,9 @@ one anyway has it ignored. The `role` field in each result shows what was used.
 
 Run **one** AWS API call across every selected account.
 
-> **Destructive operations ask first.** `Delete*`, `Terminate*`, `Remove*`, `Detach*`, `Disassociate*`,
-> `Deregister*`, `Revoke*`, `Purge*`, `Destroy*`, `Release*` and `ScheduleKeyDeletion` make the client show you
+> **Destructive and changing operations ask first.** `Delete*`, `Terminate*`, `Remove*`, `Detach*`,
+> `Disassociate*`, `Deregister*`, `Revoke*`, `Purge*`, `Destroy*`, `Release*`, `Stop*`, `Reboot*`, `Disable*`,
+> `Update*`, `Put*`, `Cancel*`, `Modify*`, `Reset*`, `Suspend*` and `ScheduleKeyDeletion` make the client show you
 > a confirmation prompt before any account is contacted. Declining, or a client without MCP elicitation
 > support, means nothing runs ([ADR 0008](adr/0008-confirm-destructive-operations.md)).
 
@@ -109,8 +110,9 @@ Example:
 
 Run a small multi-step plan, independently per account.
 
-> **Destructive operations ask first.** `Delete*`, `Terminate*`, `Remove*`, `Detach*`, `Disassociate*`,
-> `Deregister*`, `Revoke*`, `Purge*`, `Destroy*`, `Release*` and `ScheduleKeyDeletion` make the client show you
+> **Destructive and changing operations ask first.** `Delete*`, `Terminate*`, `Remove*`, `Detach*`,
+> `Disassociate*`, `Deregister*`, `Revoke*`, `Purge*`, `Destroy*`, `Release*`, `Stop*`, `Reboot*`, `Disable*`,
+> `Update*`, `Put*`, `Cancel*`, `Modify*`, `Reset*`, `Suspend*` and `ScheduleKeyDeletion` make the client show you
 > a confirmation prompt before any account is contacted. Declining, or a client without MCP elicitation
 > support, means nothing runs ([ADR 0008](adr/0008-confirm-destructive-operations.md)).
 

@@ -85,9 +85,9 @@ def is_read_operation(operation: str) -> bool:
     return operation.startswith(_READ_PREFIXES) or operation in _READ_OPERATION_ALLOWLIST
 
 
-# Verbs for operations that delete, terminate or detach something. A name that
-# is not listed simply gets no prompt, so extend this list rather than guess.
-# Stop/Reboot/Disable are disruptive but reversible, so they are not included.
+# Verbs for operations that delete, stop, disable or change something. A name
+# that is not listed simply gets no prompt, so extend this list rather than guess.
+# Create*, Run* and Start* are not listed: they add things rather than change or remove them.
 _DESTRUCTIVE_PREFIXES = (
     "Delete",
     "Terminate",
@@ -99,6 +99,15 @@ _DESTRUCTIVE_PREFIXES = (
     "Purge",
     "Destroy",
     "Release",
+    "Stop",
+    "Reboot",
+    "Disable",
+    "Update",
+    "Put",
+    "Cancel",
+    "Modify",
+    "Reset",
+    "Suspend",
 )
 
 # Destructive operations whose names do not start with a destructive verb.
@@ -106,7 +115,7 @@ _DESTRUCTIVE_OPERATION_ALLOWLIST = frozenset({"ScheduleKeyDeletion"})
 
 
 def is_destructive_operation(operation: str) -> bool:
-    """Return ``True`` if ``operation`` deletes, terminates or detaches something.
+    """Return ``True`` if ``operation`` deletes, stops, disables or changes something.
 
     A leading ``Batch`` is ignored so ``BatchDeleteImage`` counts as a delete.
 

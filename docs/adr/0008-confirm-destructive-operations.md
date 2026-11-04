@@ -12,7 +12,8 @@ against every matching account, if the role allowed it.
 ## Decision
 
 Before any account is contacted, calls whose operation name starts with `Delete`, `Terminate`,
-`Remove`, `Detach`, `Disassociate`, `Deregister`, `Revoke`, `Purge`, `Destroy` or `Release` (plus
+`Remove`, `Detach`, `Disassociate`, `Deregister`, `Revoke`, `Purge`, `Destroy`, `Release`, `Stop`,
+`Reboot`, `Disable`, `Update`, `Put`, `Cancel`, `Modify`, `Reset` or `Suspend` (plus
 `ScheduleKeyDeletion`; a leading `Batch` is ignored) trigger an MCP **elicitation**: the client shows
 the human a prompt naming the accounts, region and operations, with a checkbox.
 
@@ -30,8 +31,9 @@ what the role may do. Confirmation only makes the user's intent explicit.
 ## Consequences
 
 - Clients without elicitation support cannot run destructive operations through this server.
-- Classification is by name prefix. Mutating verbs that are not listed (for example `Stop`, `Reboot`,
-  `Disable`, `Cancel`, `Put`, `Update`) are not prompted. Extending the list is a one-line change.
+- Classification is by name prefix. Verbs that are not listed (for example `Create*`, `Run*`, `Start*`,
+  and reads) are not prompted. Extending the list is a one-line change.
+- `Put*` and `Update*` prompt too, so routine writes such as `PutMetricData` need a click each time.
 - A client or agent that auto-approves elicitation defeats the prompt; that is outside this server's reach.
 - Adds a direct `pydantic` dependency (already installed transitively by the MCP SDK).
 - "Never assume" is a request to the model, not something the server can enforce.

@@ -226,7 +226,12 @@ def test_explain_role_selection_ambiguous_returns_reason(
 
 
 def test_aws_query_allows_mutating_operation(
-    sample_config_path: Path, isolated_env: Path, monkeypatch, flush_audit
+    sample_config_path: Path,
+    isolated_env: Path,
+    monkeypatch,
+    flush_audit,
+    make_ctx,
+    in_worker_thread,
 ) -> None:
     # IAM is the sole boundary: a mutating op is dispatched and AWS decides
     # the outcome. The audit entry is flagged write=True.
@@ -246,12 +251,14 @@ def test_aws_query_allows_mutating_operation(
         lambda **kwargs: {"StoppingInstances": [{"InstanceId": "i-123"}]},
     )
 
-    result = server_module.aws_query(
+    result = in_worker_thread(
+        server_module.aws_query,
         service="ec2",
         operation="StopInstances",
         region="us-east-1",
         params={"InstanceIds": ["i-123"]},
         org="org1",
+        ctx=make_ctx(),
     )
     assert result["target_count"] == 1
     assert result["results"][0]["ok"] is True
