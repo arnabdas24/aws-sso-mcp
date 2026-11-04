@@ -1,6 +1,6 @@
 [project]
 name = "aws-sso-mcp"
-version = "0.2.0"
+version = "0.3.0"
 description = "Query multiple AWS accounts across orgs at once from your AI chat client, via IAM Identity Center SSO. Rule-based role selection, no long-lived keys."
 readme = "README.md"
 license = "Apache-2.0"
