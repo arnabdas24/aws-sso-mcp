@@ -319,6 +319,17 @@ def _parse_performance(raw: dict[str, Any], source: Path) -> PerformanceConfig:
     )
 
 
+def config_is_writable(path: Path) -> bool:
+    """Return True if the current user can modify the config file.
+
+    The rules in this file are the only limit on which roles are used, so a
+    writable file means anything running as this user (including an agent's
+    own file-edit tools) could widen them. On Windows only the read-only
+    attribute is visible here; ACLs are not inspected.
+    """
+    return os.access(path, os.W_OK)
+
+
 def load_config(path: Path | str | None = None) -> Config:
     """Load and validate the aws-sso-mcp TOML configuration.
 
