@@ -72,6 +72,15 @@ one anyway has it ignored. The `role` field in each result shows what was used.
 
 Run **one** AWS API call across every selected account.
 
+> **Risky operations ask first**, with a warning matching the risk:
+> **irreversible** (`Delete*`, `Terminate*`, `Remove*`, `Detach*`, `Disassociate*`, `Deregister*`, `Revoke*`,
+> `Purge*`, `Destroy*`, `Release*`, `ScheduleKeyDeletion`), **disruptive** (`Stop*`, `Reboot*`, `Disable*`,
+> `Update*`, `Put*`, `Cancel*`, `Modify*`, `Reset*`, `Suspend*`) and **may incur cost** (`Create*`, `Run*`,
+> `Start*`, `Launch*`, `Allocate*`). The client shows you
+> a confirmation prompt before any account is contacted. Declining, or a client without MCP elicitation
+> support, means nothing runs ([ADR 0008](adr/0008-confirm-risky-operations.md)).
+
+
 | Argument | Required | Description |
 |---|---|---|
 | `service` | yes | boto3 service name: `ec2`, `s3`, `iam`, `rds`, ... |
@@ -102,6 +111,15 @@ Example:
 ### `run_dag`
 
 Run a small multi-step plan, independently per account.
+
+> **Risky operations ask first**, with a warning matching the risk:
+> **irreversible** (`Delete*`, `Terminate*`, `Remove*`, `Detach*`, `Disassociate*`, `Deregister*`, `Revoke*`,
+> `Purge*`, `Destroy*`, `Release*`, `ScheduleKeyDeletion`), **disruptive** (`Stop*`, `Reboot*`, `Disable*`,
+> `Update*`, `Put*`, `Cancel*`, `Modify*`, `Reset*`, `Suspend*`) and **may incur cost** (`Create*`, `Run*`,
+> `Start*`, `Launch*`, `Allocate*`). The client shows you
+> a confirmation prompt before any account is contacted. Declining, or a client without MCP elicitation
+> support, means nothing runs ([ADR 0008](adr/0008-confirm-risky-operations.md)).
+
 
 | Argument | Required | Description |
 |---|---|---|

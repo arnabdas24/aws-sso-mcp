@@ -15,8 +15,10 @@ the outcome. This module never refuses a call that AWS itself would allow; if
 the role lacks permission, AWS returns AccessDenied and that error is surfaced
 verbatim (minus transport noise) to the caller.
 
-The read-classification helper :func:`is_read_operation` does not gate anything.
-It exists purely to *label* each call read-vs-write in the audit log.
+The classification helpers :func:`is_read_operation` and
+:func:`operation_risk` do not authorize anything. The first *labels*
+each call read-vs-write in the audit log; the second tells the caller when to
+ask the user for consent first (see ``confirmation.py``). Neither refuses a call.
 
 Pagination
 ----------
@@ -31,7 +33,7 @@ the response says so explicitly rather than quietly lying.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 import boto3
 from botocore import xform_name
@@ -81,6 +83,63 @@ def is_read_operation(operation: str) -> bool:
         audit-log entries, never to allow or deny a call.
     """
     return operation.startswith(_READ_PREFIXES) or operation in _READ_OPERATION_ALLOWLIST
+
+
+# Verb prefixes that need the user's confirmation, grouped by what to warn about. A
+# name that is not listed simply gets no prompt, so extend these rather than guess.
+_IRREVERSIBLE_PREFIXES = (
+    "Delete",
+    "Terminate",
+    "Remove",
+    "Detach",
+    "Disassociate",
+    "Deregister",
+    "Revoke",
+    "Purge",
+    "Destroy",
+    "Release",
+)
+_CHANGE_PREFIXES = (
+    "Stop",
+    "Reboot",
+    "Disable",
+    "Update",
+    "Put",
+    "Cancel",
+    "Modify",
+    "Reset",
+    "Suspend",
+)
+_COST_PREFIXES = ("Create", "Run", "Start", "Launch", "Allocate")
+
+# Irreversible operations whose names do not start with an irreversible verb.
+_IRREVERSIBLE_OPERATION_ALLOWLIST = frozenset({"ScheduleKeyDeletion"})
+
+type Risk = Literal["irreversible", "change", "cost"]
+
+
+def operation_risk(operation: str) -> Risk | None:
+    """Classify what the user should be warned about before ``operation`` runs.
+
+    A leading ``Batch`` is ignored so ``BatchDeleteImage`` counts as a delete.
+
+    Args:
+        operation: A PascalCase operation name, e.g. ``"TerminateInstances"``.
+
+    Returns:
+        ``"irreversible"`` (deletes or detaches), ``"change"`` (stops, disables or
+        modifies), ``"cost"`` (creates or starts, so it may incur charges), or
+        ``None`` for everything else. Used only to decide whether to ask, never
+        to allow or deny a call.
+    """
+    verb = operation.removeprefix("Batch")
+    if verb.startswith(_IRREVERSIBLE_PREFIXES) or operation in _IRREVERSIBLE_OPERATION_ALLOWLIST:
+        return "irreversible"
+    if verb.startswith(_CHANGE_PREFIXES):
+        return "change"
+    if verb.startswith(_COST_PREFIXES):
+        return "cost"
+    return None
 
 
 def _raise_clean_error(service: str, operation: str, exc: Exception) -> AwsCallError:

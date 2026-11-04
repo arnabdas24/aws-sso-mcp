@@ -44,6 +44,37 @@ def test_is_read_operation(operation: str, expected: bool) -> None:
     assert catalog.is_read_operation(operation) is expected
 
 
+@pytest.mark.parametrize(
+    ("operation", "expected"),
+    [
+        ("DeleteBucket", "irreversible"),
+        ("TerminateInstances", "irreversible"),
+        ("RemoveTagsFromResource", "irreversible"),
+        ("DetachVolume", "irreversible"),
+        ("DisassociateAddress", "irreversible"),
+        ("DeregisterImage", "irreversible"),
+        ("RevokeSecurityGroupIngress", "irreversible"),
+        ("ReleaseAddress", "irreversible"),
+        ("BatchDeleteImage", "irreversible"),
+        ("ScheduleKeyDeletion", "irreversible"),
+        ("StopInstances", "change"),
+        ("RebootInstances", "change"),
+        ("PutObject", "change"),
+        ("UpdateFunctionCode", "change"),
+        ("DisableAlarmActions", "change"),
+        ("CancelSpotFleetRequests", "change"),
+        ("CreateBucket", "cost"),
+        ("RunInstances", "cost"),
+        ("StartInstances", "cost"),
+        ("DescribeInstances", None),
+        ("ListBuckets", None),
+        ("BatchGetItem", None),
+    ],
+)
+def test_operation_risk(operation: str, expected: str | None) -> None:
+    assert catalog.operation_risk(operation) == expected
+
+
 def test_execute_call_requires_region() -> None:
     with pytest.raises(RegionError):
         catalog.execute_call(
